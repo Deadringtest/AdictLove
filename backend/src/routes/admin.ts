@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { requireAdmin, requireAuth } from '../auth';
+import { parsePositiveInt } from '../validation';
 
 const router = Router();
 
@@ -12,18 +13,26 @@ router.get('/verifications/pending', requireAuth, requireAdmin, async (_req, res
 });
 
 router.post('/verifications/:userId/approve', requireAuth, requireAdmin, async (req, res) => {
+  const userId = parsePositiveInt(req.params.userId);
+  if (userId === null) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   const result = await pool.query(
     `UPDATE users SET verification_status = 'approved' WHERE id = $1 RETURNING id, display_name, verification_status`,
-    [req.params.userId]
+    [userId]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
   res.json(result.rows[0]);
 });
 
 router.post('/verifications/:userId/reject', requireAuth, requireAdmin, async (req, res) => {
+  const userId = parsePositiveInt(req.params.userId);
+  if (userId === null) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   const result = await pool.query(
     `UPDATE users SET verification_status = 'rejected' WHERE id = $1 RETURNING id, display_name, verification_status`,
-    [req.params.userId]
+    [userId]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
   res.json(result.rows[0]);

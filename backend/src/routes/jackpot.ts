@@ -3,6 +3,7 @@ import { PoolClient } from 'pg';
 import { pool } from '../db';
 import { AuthedRequest, requireAdmin, requireAuth } from '../auth';
 import { sendToUser } from '../ws';
+import { parsePositiveInt } from '../validation';
 
 const router = Router();
 
@@ -295,8 +296,33 @@ router.post('/spin', requireAuth, (req: AuthedRequest, res) => performSpin(req, 
 router.post('/spin/boost', requireAuth, (req: AuthedRequest, res) => performSpin(req, res, 2, true));
 
 router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, res) => {
-  const otherUserId = Number(req.params.resultUserId);
+  const otherUserId = parsePositiveInt(req.params.resultUserId);
+  if (otherUserId === null) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   const wantsMega = req.body.mega === true;
+
+  // The like only counts if this user actually drew otherUserId via a paid
+  // spin -- otherwise anyone could "like" an arbitrary id for free and ride
+  // a real reciprocal draw into a match without ever spending a ticket.
+  // The atomic UPDATE also stops the same draw being liked/mega-liked twice
+  // (race-safe: concurrent calls can only flip `liked` once).
+  const claimed = await pool.query(
+    `UPDATE jackpot_draws SET liked = true
+     WHERE user_id = $1 AND matched_user_id = $2 AND liked = false
+     RETURNING id`,
+    [req.userId, otherUserId]
+  );
+  if (claimed.rows.length === 0) {
+    const exists = await pool.query(
+      `SELECT 1 FROM jackpot_draws WHERE user_id = $1 AND matched_user_id = $2`,
+      [req.userId, otherUserId]
+    );
+    if (exists.rows.length === 0) {
+      return res.status(404).json({ error: 'You have not drawn this person' });
+    }
+    return res.status(409).json({ error: 'Already responded to this match' });
+  }
 
   let mega = false;
   if (wantsMega) {

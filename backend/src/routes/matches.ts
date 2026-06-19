@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { pool } from '../db';
 import { AuthedRequest, requireAuth } from '../auth';
 import { sendToUser } from '../ws';
+import { parsePositiveInt } from '../validation';
 
 const router = Router();
+const MAX_MESSAGE_LENGTH = 2000;
 
-async function getMatchIfParticipant(matchId: string, userId: number) {
+async function getMatchIfParticipant(matchId: number, userId: number) {
   const result = await pool.query(
     `SELECT m.* FROM matches m
      WHERE m.id = $1 AND (m.user_a_id = $2 OR m.user_b_id = $2)
@@ -43,20 +45,28 @@ router.get('/', requireAuth, async (req: AuthedRequest, res) => {
 });
 
 router.get('/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
-  const match = await getMatchIfParticipant(req.params.id, req.userId!);
+  const matchId = parsePositiveInt(req.params.id);
+  if (matchId === null) {
+    return res.status(400).json({ error: 'Invalid match id' });
+  }
+  const match = await getMatchIfParticipant(matchId, req.userId!);
   if (!match) {
     return res.status(404).json({ error: 'Match not found' });
   }
 
   const result = await pool.query(
     'SELECT id, sender_id, body, created_at, read_at FROM messages WHERE match_id = $1 ORDER BY created_at',
-    [req.params.id]
+    [matchId]
   );
   res.json(result.rows);
 });
 
 router.post('/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
-  const match = await getMatchIfParticipant(req.params.id, req.userId!);
+  const matchId = parsePositiveInt(req.params.id);
+  if (matchId === null) {
+    return res.status(400).json({ error: 'Invalid match id' });
+  }
+  const match = await getMatchIfParticipant(matchId, req.userId!);
   if (!match) {
     return res.status(404).json({ error: 'Match not found' });
   }
@@ -65,10 +75,13 @@ router.post('/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
   if (!body) {
     return res.status(400).json({ error: 'Message body is required' });
   }
+  if (body.length > MAX_MESSAGE_LENGTH) {
+    return res.status(400).json({ error: `Message must be ${MAX_MESSAGE_LENGTH} characters or fewer` });
+  }
 
   const result = await pool.query(
     'INSERT INTO messages (match_id, sender_id, body) VALUES ($1, $2, $3) RETURNING id, sender_id, body, created_at, read_at',
-    [req.params.id, req.userId, body]
+    [matchId, req.userId, body]
   );
 
   const message = result.rows[0];
@@ -81,7 +94,11 @@ router.post('/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
 const MAX_GIFTS_PER_DAY = 3;
 
 router.post('/:id/gift-ticket', requireAuth, async (req: AuthedRequest, res) => {
-  const match = await getMatchIfParticipant(req.params.id, req.userId!);
+  const matchId = parsePositiveInt(req.params.id);
+  if (matchId === null) {
+    return res.status(400).json({ error: 'Invalid match id' });
+  }
+  const match = await getMatchIfParticipant(matchId, req.userId!);
   if (!match) {
     return res.status(404).json({ error: 'Match not found' });
   }
@@ -129,7 +146,11 @@ router.post('/:id/gift-ticket', requireAuth, async (req: AuthedRequest, res) => 
 });
 
 router.post('/:id/read', requireAuth, async (req: AuthedRequest, res) => {
-  const match = await getMatchIfParticipant(req.params.id, req.userId!);
+  const matchId = parsePositiveInt(req.params.id);
+  if (matchId === null) {
+    return res.status(400).json({ error: 'Invalid match id' });
+  }
+  const match = await getMatchIfParticipant(matchId, req.userId!);
   if (!match) {
     return res.status(404).json({ error: 'Match not found' });
   }
@@ -138,7 +159,7 @@ router.post('/:id/read', requireAuth, async (req: AuthedRequest, res) => {
     `UPDATE messages SET read_at = now()
      WHERE match_id = $1 AND sender_id != $2 AND read_at IS NULL
      RETURNING id, sender_id`,
-    [req.params.id, req.userId]
+    [matchId, req.userId]
   );
 
   if (result.rows.length > 0) {

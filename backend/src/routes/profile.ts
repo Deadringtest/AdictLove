@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import { pool } from '../db';
 import { AuthedRequest, requireAuth } from '../auth';
+import { parsePositiveInt } from '../validation';
 
 const router = Router();
 const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads');
@@ -145,7 +146,11 @@ router.post('/photos', requireAuth, upload.single('photo'), async (req: AuthedRe
 });
 
 router.delete('/photos/:id', requireAuth, async (req: AuthedRequest, res) => {
-  await pool.query('DELETE FROM photos WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+  const photoId = parsePositiveInt(req.params.id);
+  if (photoId === null) {
+    return res.status(400).json({ error: 'Invalid photo id' });
+  }
+  await pool.query('DELETE FROM photos WHERE id = $1 AND user_id = $2', [photoId, req.userId]);
   res.status(204).end();
 });
 

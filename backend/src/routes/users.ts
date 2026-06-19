@@ -1,12 +1,17 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { AuthedRequest, requireAuth } from '../auth';
+import { parsePositiveInt } from '../validation';
 
 const router = Router();
 const MAX_REPORTS_PER_DAY = 5;
+const MAX_REASON_LENGTH = 500;
 
 router.get('/:id/photos', requireAuth, async (req: AuthedRequest, res) => {
-  const targetId = Number(req.params.id);
+  const targetId = parsePositiveInt(req.params.id);
+  if (targetId === null) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   const blocked = await pool.query(
     `SELECT 1 FROM blocks WHERE (blocker_id = $1 AND blocked_id = $2) OR (blocker_id = $2 AND blocked_id = $1)`,
     [req.userId, targetId]
@@ -33,9 +38,16 @@ router.get('/blocked', requireAuth, async (req: AuthedRequest, res) => {
 });
 
 router.post('/:id/block', requireAuth, async (req: AuthedRequest, res) => {
-  const blockedId = Number(req.params.id);
+  const blockedId = parsePositiveInt(req.params.id);
+  if (blockedId === null) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   if (blockedId === req.userId) {
     return res.status(400).json({ error: 'Cannot block yourself' });
+  }
+  const target = await pool.query('SELECT id FROM users WHERE id = $1', [blockedId]);
+  if (target.rows.length === 0) {
+    return res.status(404).json({ error: 'User not found' });
   }
   await pool.query(
     `INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
@@ -45,18 +57,28 @@ router.post('/:id/block', requireAuth, async (req: AuthedRequest, res) => {
 });
 
 router.delete('/:id/block', requireAuth, async (req: AuthedRequest, res) => {
+  const blockedId = parsePositiveInt(req.params.id);
+  if (blockedId === null) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   await pool.query('DELETE FROM blocks WHERE blocker_id = $1 AND blocked_id = $2', [
     req.userId,
-    req.params.id,
+    blockedId,
   ]);
   res.status(204).end();
 });
 
 router.post('/:id/report', requireAuth, async (req: AuthedRequest, res) => {
-  const reportedId = Number(req.params.id);
+  const reportedId = parsePositiveInt(req.params.id);
+  if (reportedId === null) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   const reason = (req.body.reason as string)?.trim();
   if (!reason) {
     return res.status(400).json({ error: 'A reason is required' });
+  }
+  if (reason.length > MAX_REASON_LENGTH) {
+    return res.status(400).json({ error: `Reason must be ${MAX_REASON_LENGTH} characters or fewer` });
   }
   if (reportedId === req.userId) {
     return res.status(400).json({ error: 'Cannot report yourself' });

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { AuthedRequest, requireAdmin, requireAuth } from '../auth';
+import { parsePositiveInt } from '../validation';
 
 const router = Router();
 const MAX_NAME_LENGTH = 40;
@@ -48,18 +49,26 @@ router.get('/pending', requireAuth, requireAdmin, async (_req, res) => {
 });
 
 router.post('/:id/approve', requireAuth, requireAdmin, async (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (id === null) {
+    return res.status(400).json({ error: 'Invalid category id' });
+  }
   const result = await pool.query(
     `UPDATE categories SET status = 'approved' WHERE id = $1 RETURNING id, name, status`,
-    [req.params.id]
+    [id]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: 'Category not found' });
   res.json(result.rows[0]);
 });
 
 router.post('/:id/reject', requireAuth, requireAdmin, async (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (id === null) {
+    return res.status(400).json({ error: 'Invalid category id' });
+  }
   const result = await pool.query(
     `UPDATE categories SET status = 'rejected' WHERE id = $1 RETURNING id, name, status`,
-    [req.params.id]
+    [id]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: 'Category not found' });
   res.json(result.rows[0]);
