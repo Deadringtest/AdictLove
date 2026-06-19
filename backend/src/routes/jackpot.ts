@@ -8,6 +8,7 @@ const router = Router();
 
 const DAILY_TICKET_CAP = 5;
 const BASE_DAILY_TICKETS = 3;
+const MAX_AD_TICKETS_PER_DAY = 3;
 
 router.get('/tickets', requireAuth, async (req: AuthedRequest, res) => {
   const result = await pool.query(
@@ -67,6 +68,43 @@ router.post('/tickets/claim-daily', requireAuth, async (req: AuthedRequest, res)
 
     await client.query('COMMIT');
     res.json({ granted: toGrant, streak: newStreak });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+// Rewarded ad: client confirms an ad finished playing, server grants one
+// ticket, capped per day and independent of the daily-claim streak.
+router.post('/tickets/watch-ad', requireAuth, async (req: AuthedRequest, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const user = await client.query(
+      `SELECT ad_tickets_claimed_today,
+              (last_ad_ticket_date IS NULL OR last_ad_ticket_date < CURRENT_DATE) AS "isNewDay"
+       FROM users WHERE id = $1 FOR UPDATE`,
+      [req.userId]
+    );
+    const { ad_tickets_claimed_today: claimedToday, isNewDay } = user.rows[0];
+    const claimedSoFar = isNewDay ? 0 : claimedToday;
+
+    if (claimedSoFar >= MAX_AD_TICKETS_PER_DAY) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Daily ad ticket limit reached' });
+    }
+
+    await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [req.userId]);
+    await client.query(
+      'UPDATE users SET ad_tickets_claimed_today = $1, last_ad_ticket_date = CURRENT_DATE WHERE id = $2',
+      [claimedSoFar + 1, req.userId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ granted: 1, remainingToday: MAX_AD_TICKETS_PER_DAY - (claimedSoFar + 1) });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

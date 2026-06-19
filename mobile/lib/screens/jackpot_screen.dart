@@ -53,6 +53,26 @@ class _JackpotScreenState extends State<JackpotScreen> {
     }
   }
 
+  // No real ad SDK is wired up (that needs your own AdMob/Meta app IDs).
+  // This simulates the rewarded-ad flow with a timed dialog so the ticket
+  // economy can be tested end-to-end; swap the body of this dialog for a
+  // real rewarded-ad call once you have ad account credentials.
+  Future<void> _watchAd() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _MockAdDialog(),
+    );
+    if (!mounted) return;
+    try {
+      final result = await _api.watchAdForTicket();
+      setState(() => _dailyMessage = 'Ad reward! +1 ticket (${result['remainingToday']} more today)');
+      await _refreshTickets();
+    } catch (e) {
+      setState(() => _dailyMessage = e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
   Future<void> _spin({bool boost = false}) async {
     setState(() {
       _spinning = true;
@@ -207,6 +227,12 @@ class _JackpotScreenState extends State<JackpotScreen> {
               icon: const Icon(Icons.bolt),
               label: const Text('Boost Spin (2 tickets)'),
             ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: _spinning ? null : _watchAd,
+              icon: const Icon(Icons.smart_display_outlined),
+              label: const Text('Watch an ad for +1 ticket'),
+            ),
             if (_boosted && _result != null && !_spinning)
               const Padding(
                 padding: EdgeInsets.only(top: 8),
@@ -214,6 +240,51 @@ class _JackpotScreenState extends State<JackpotScreen> {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MockAdDialog extends StatefulWidget {
+  const _MockAdDialog();
+
+  @override
+  State<_MockAdDialog> createState() => _MockAdDialogState();
+}
+
+class _MockAdDialogState extends State<_MockAdDialog> {
+  int _secondsLeft = 5;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      setState(() => _secondsLeft--);
+      if (_secondsLeft <= 0) {
+        _timer?.cancel();
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Ad playing...'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.smart_display, size: 48),
+          const SizedBox(height: 12),
+          Text('Reward in $_secondsLeft...'),
+        ],
       ),
     );
   }

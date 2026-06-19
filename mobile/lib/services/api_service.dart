@@ -235,6 +235,15 @@ class ApiService {
     return body;
   }
 
+  Future<Map<String, dynamic>> watchAdForTicket() async {
+    final res = await http.post(Uri.parse('$baseUrl/jackpot/tickets/watch-ad'), headers: await _authHeaders());
+    final body = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      throw Exception(body['error'] ?? 'Ad reward failed');
+    }
+    return body;
+  }
+
   Future<void> blockUser(int userId) async {
     final res = await http.post(Uri.parse('$baseUrl/users/$userId/block'), headers: await _authHeaders());
     _decodeOrThrow(res, 201);
