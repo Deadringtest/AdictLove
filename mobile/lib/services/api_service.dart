@@ -16,6 +16,15 @@ class ApiService {
     await prefs.setString('token', token);
   }
 
+  Future<int?> currentUserId() async {
+    final token = await _token();
+    if (token == null) return null;
+    final parts = token.split('.');
+    if (parts.length != 3) return null;
+    final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+    return jsonDecode(payload)['userId'] as int?;
+  }
+
   Future<Map<String, String>> _authHeaders() async {
     final token = await _token();
     return {
@@ -163,5 +172,32 @@ class ApiService {
       headers: await _authHeaders(),
     );
     return jsonDecode(res.body)['mutualMatch'] == true;
+  }
+
+  Future<List<Map<String, dynamic>>> getUserPhotos(int userId) async {
+    final res = await http.get(Uri.parse('$baseUrl/users/$userId/photos'), headers: await _authHeaders());
+    final body = _decodeOrThrow(res, 200) as List;
+    return body.cast<Map<String, dynamic>>();
+  }
+
+  Future<List<Map<String, dynamic>>> getMatches() async {
+    final res = await http.get(Uri.parse('$baseUrl/matches'), headers: await _authHeaders());
+    final body = _decodeOrThrow(res, 200) as List;
+    return body.cast<Map<String, dynamic>>();
+  }
+
+  Future<List<Map<String, dynamic>>> getMessages(int matchId) async {
+    final res = await http.get(Uri.parse('$baseUrl/matches/$matchId/messages'), headers: await _authHeaders());
+    final body = _decodeOrThrow(res, 200) as List;
+    return body.cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> sendMessage(int matchId, String body) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/matches/$matchId/messages'),
+      headers: await _authHeaders(),
+      body: jsonEncode({'body': body}),
+    );
+    return _decodeOrThrow(res, 201);
   }
 }

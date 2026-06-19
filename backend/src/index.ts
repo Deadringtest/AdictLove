@@ -7,6 +7,8 @@ import preferencesRoutes from './routes/preferences';
 import jackpotRoutes from './routes/jackpot';
 import profileRoutes from './routes/profile';
 import categoriesRoutes from './routes/categories';
+import matchesRoutes from './routes/matches';
+import usersRoutes from './routes/users';
 
 const app = express();
 app.use(cors());
@@ -18,6 +20,8 @@ app.use('/preferences', preferencesRoutes);
 app.use('/jackpot', jackpotRoutes);
 app.use('/profile', profileRoutes);
 app.use('/categories', categoriesRoutes);
+app.use('/matches', matchesRoutes);
+app.use('/users', usersRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 

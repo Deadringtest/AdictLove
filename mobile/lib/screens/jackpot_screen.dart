@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../widgets/photo_gallery.dart';
+import 'matches_screen.dart';
 
 class JackpotScreen extends StatefulWidget {
   const JackpotScreen({super.key});
@@ -14,6 +16,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
   int _tickets = 0;
   bool _spinning = false;
   Map<String, dynamic>? _result;
+  List<String> _resultPhotos = [];
   String? _error;
 
   List<Map<String, dynamic>> _reel = [];
@@ -55,7 +58,11 @@ class _JackpotScreenState extends State<JackpotScreen> {
 
       await _animateReel();
 
-      setState(() => _result = result);
+      final photos = await _api.getUserPhotos(result['id']);
+      setState(() {
+        _result = result;
+        _resultPhotos = photos.map((p) => p['file_path'] as String).toList();
+      });
       await _refreshTickets();
     } catch (e) {
       setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
@@ -113,7 +120,16 @@ class _JackpotScreenState extends State<JackpotScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Jackpot')),
+      appBar: AppBar(
+        title: const Text('Jackpot'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            onPressed: () =>
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MatchesScreen())),
+          ),
+        ],
+      ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -123,7 +139,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
             if (_spinning && _reel.isNotEmpty) _photoTile(_reel[_reelIndex]),
             if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
             if (!_spinning && _result != null) ...[
-              _photoTile(_result),
+              PhotoGallery(photoPaths: _resultPhotos),
               const SizedBox(height: 12),
               Text(_result!['display_name'], style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               if (_result!['bio'] != null && (_result!['bio'] as String).isNotEmpty) Text(_result!['bio']),
