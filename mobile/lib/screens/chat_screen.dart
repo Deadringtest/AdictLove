@@ -109,6 +109,21 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _giftTicket() async {
+    try {
+      await _api.giftTicket(widget.matchId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sent ${widget.otherUserName} a ticket!')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
   Future<void> _report() async {
     final reasonController = TextEditingController();
     final reason = await showDialog<String>(
@@ -140,6 +155,11 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: Text(widget.otherUserName),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.card_giftcard_outlined),
+            tooltip: 'Gift a jackpot ticket',
+            onPressed: _giftTicket,
+          ),
           PopupMenuButton<String>(
             onSelected: (value) => value == 'block' ? _block() : _report(),
             itemBuilder: (_) => const [

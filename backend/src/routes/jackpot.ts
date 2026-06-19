@@ -12,6 +12,26 @@ const MAX_AD_TICKETS_PER_DAY = 3;
 const STREAK_MILESTONES = [7, 30, 100];
 const MILESTONE_BONUS_TICKETS = 2;
 
+// A deterministic "lucky hour" each day (changes daily, looks random to
+// players) where regular spins are free. Pure delight mechanic, no real
+// money involved -- just better odds of playing more that day.
+function luckyHourFor(date: Date): number {
+  const dayKey = date.toISOString().slice(0, 10);
+  let hash = 0;
+  for (const char of dayKey) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash % 24;
+}
+
+function isLuckyHourNow(): boolean {
+  const now = new Date();
+  return now.getUTCHours() === luckyHourFor(now);
+}
+
+router.get('/lucky-hour', requireAuth, async (_req, res) => {
+  const now = new Date();
+  res.json({ hourUtc: luckyHourFor(now), active: isLuckyHourNow() });
+});
+
 router.get('/tickets', requireAuth, async (req: AuthedRequest, res) => {
   const result = await pool.query(
     'SELECT COUNT(*) FROM jackpot_tickets WHERE user_id = $1 AND spent = false',
@@ -189,7 +209,9 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
   try {
     await client.query('BEGIN');
 
-    const spent = await spendTickets(client, req.userId!, cost);
+    // Regular spins are free during the daily lucky hour; boost still costs.
+    const actualCost = !boosted && isLuckyHourNow() ? 0 : cost;
+    const spent = await spendTickets(client, req.userId!, actualCost);
     if (!spent) {
       await client.query('ROLLBACK');
       return res.status(402).json({ error: 'Not enough jackpot tickets available' });
@@ -217,11 +239,20 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
     );
 
     const prompt = await client.query(
-      `SELECT p.text AS prompt, up.answer FROM user_prompts up
+      `SELECT p.text AS prompt, up.answer, up.prompt_id FROM user_prompts up
        JOIN prompts p ON p.id = up.prompt_id
        WHERE up.user_id = $1 ORDER BY up.position LIMIT 1`,
       [matchedUserId]
     );
+
+    let mutualPrompt = false;
+    if (prompt.rows[0]) {
+      const mine = await client.query(
+        'SELECT 1 FROM user_prompts WHERE user_id = $1 AND prompt_id = $2',
+        [req.userId, prompt.rows[0].prompt_id]
+      );
+      mutualPrompt = mine.rows.length > 0;
+    }
 
     const decoys = await client.query(
       `SELECT u.id, u.display_name,
@@ -238,7 +269,7 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
 
     await client.query('COMMIT');
     res.json({
-      result: { ...profile.rows[0], prompt: prompt.rows[0] ?? null },
+      result: { ...profile.rows[0], prompt: prompt.rows[0] ?? null, mutualPrompt },
       decoys: decoys.rows,
       sharedCategories,
     });

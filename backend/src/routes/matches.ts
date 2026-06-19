@@ -78,6 +78,56 @@ router.post('/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
   res.status(201).json(message);
 });
 
+const MAX_GIFTS_PER_DAY = 3;
+
+router.post('/:id/gift-ticket', requireAuth, async (req: AuthedRequest, res) => {
+  const match = await getMatchIfParticipant(req.params.id, req.userId!);
+  if (!match) {
+    return res.status(404).json({ error: 'Match not found' });
+  }
+  const recipientId = match.user_a_id === req.userId ? match.user_b_id : match.user_a_id;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const ticket = await client.query(
+      'SELECT id FROM jackpot_tickets WHERE user_id = $1 AND spent = false ORDER BY id LIMIT 1 FOR UPDATE',
+      [req.userId]
+    );
+    if (ticket.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(402).json({ error: 'No tickets to gift' });
+    }
+
+    const giftedToday = await client.query(
+      'SELECT COUNT(*) FROM ticket_gifts WHERE from_user_id = $1 AND created_at >= CURRENT_DATE',
+      [req.userId]
+    );
+    if (Number(giftedToday.rows[0].count) >= MAX_GIFTS_PER_DAY) {
+      await client.query('ROLLBACK');
+      return res.status(429).json({ error: 'Daily gift limit reached' });
+    }
+
+    await client.query('UPDATE jackpot_tickets SET spent = true WHERE id = $1', [ticket.rows[0].id]);
+    await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [recipientId]);
+    await client.query(
+      'INSERT INTO ticket_gifts (from_user_id, to_user_id, match_id) VALUES ($1, $2, $3)',
+      [req.userId, recipientId, match.id]
+    );
+
+    await client.query('COMMIT');
+    const me = await pool.query('SELECT display_name FROM users WHERE id = $1', [req.userId]);
+    sendToUser(recipientId, 'gift_ticket', { fromUserId: req.userId, displayName: me.rows[0].display_name });
+    res.json({ gifted: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
 router.post('/:id/read', requireAuth, async (req: AuthedRequest, res) => {
   const match = await getMatchIfParticipant(req.params.id, req.userId!);
   if (!match) {

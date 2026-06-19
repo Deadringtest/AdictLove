@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../services/theme_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -12,7 +13,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProviderStateMixin {
-  late final TabController _tabController = TabController(length: 3, vsync: this);
+  late final TabController _tabController = TabController(length: 4, vsync: this);
 
   @override
   void dispose() {
@@ -27,10 +28,12 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         title: const Text('Settings'),
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
           tabs: const [
             Tab(text: 'Profile'),
             Tab(text: 'Preferences'),
             Tab(text: 'Appearance'),
+            Tab(text: 'Notifications'),
           ],
         ),
       ),
@@ -40,6 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           _ProfileTab(),
           _PreferencesTab(),
           _AppearanceTab(),
+          _NotificationsTab(),
         ],
       ),
     );
@@ -501,6 +505,90 @@ class _AppearanceTab extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _NotificationsTab extends StatefulWidget {
+  const _NotificationsTab();
+
+  @override
+  State<_NotificationsTab> createState() => _NotificationsTabState();
+}
+
+class _NotificationsTabState extends State<_NotificationsTab> {
+  bool _loading = true;
+  bool _enabled = true;
+  TimeOfDay? _reminderTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final enabled = await NotificationService.instance.isEnabled();
+    final reminder = await NotificationService.instance.getReminderTime();
+    setState(() {
+      _enabled = enabled;
+      _reminderTime = reminder != null ? TimeOfDay(hour: reminder.$1, minute: reminder.$2) : null;
+      _loading = false;
+    });
+  }
+
+  Future<void> _setEnabled(bool value) async {
+    await NotificationService.instance.setEnabled(value);
+    setState(() => _enabled = value);
+  }
+
+  Future<void> _pickReminderTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _reminderTime ?? const TimeOfDay(hour: 18, minute: 0),
+    );
+    if (picked == null) return;
+    await NotificationService.instance.scheduleDailyReminder(picked.hour, picked.minute);
+    setState(() => _reminderTime = picked);
+  }
+
+  Future<void> _clearReminder() async {
+    await NotificationService.instance.cancelDailyReminder();
+    setState(() => _reminderTime = null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        SwitchListTile(
+          title: const Text('Enable notifications'),
+          subtitle: const Text('Matches, messages, mega likes, and ticket gifts'),
+          value: _enabled,
+          onChanged: _setEnabled,
+        ),
+        const SizedBox(height: 16),
+        Text('Daily reminder', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ListTile(
+          enabled: _enabled,
+          contentPadding: EdgeInsets.zero,
+          title: Text(_reminderTime == null ? 'Not set' : 'Remind me at ${_reminderTime!.format(context)}'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton(
+                onPressed: _enabled ? _pickReminderTime : null,
+                child: Text(_reminderTime == null ? 'Set' : 'Change'),
+              ),
+              if (_reminderTime != null)
+                TextButton(onPressed: _enabled ? _clearReminder : null, child: const Text('Clear')),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

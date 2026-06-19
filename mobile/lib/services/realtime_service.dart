@@ -71,6 +71,12 @@ class RealtimeService {
               body: 'Spin the jackpot to find out who liked you!',
             );
             break;
+          case 'gift_ticket':
+            NotificationService.instance.show(
+              title: 'Ticket gift!',
+              body: '${data['displayName']} sent you a jackpot ticket.',
+            );
+            break;
         }
       },
       onError: (_) => _scheduleReconnect(),

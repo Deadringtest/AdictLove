@@ -258,6 +258,16 @@ class ApiService {
     return body['pose'];
   }
 
+  Future<Map<String, dynamic>> getLuckyHour() async {
+    final res = await http.get(Uri.parse('$baseUrl/jackpot/lucky-hour'), headers: await _authHeaders());
+    return _decodeOrThrow(res, 200);
+  }
+
+  Future<void> giftTicket(int matchId) async {
+    final res = await http.post(Uri.parse('$baseUrl/matches/$matchId/gift-ticket'), headers: await _authHeaders());
+    _decodeOrThrow(res, 200);
+  }
+
   Future<Map<String, dynamic>> watchAdForTicket() async {
     final res = await http.post(Uri.parse('$baseUrl/jackpot/tickets/watch-ad'), headers: await _authHeaders());
     final body = jsonDecode(res.body);

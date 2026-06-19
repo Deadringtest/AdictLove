@@ -22,6 +22,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
   String? _error;
   String? _dailyMessage;
   int _sharedCategories = 0;
+  bool _luckyHourActive = false;
 
   List<Map<String, dynamic>> _reel = [];
   int _reelIndex = 0;
@@ -31,6 +32,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
   void initState() {
     super.initState();
     _refreshTickets();
+    _refreshLuckyHour();
   }
 
   @override
@@ -42,6 +44,11 @@ class _JackpotScreenState extends State<JackpotScreen> {
   Future<void> _refreshTickets() async {
     final tickets = await _api.getTickets();
     setState(() => _tickets = tickets);
+  }
+
+  Future<void> _refreshLuckyHour() async {
+    final status = await _api.getLuckyHour();
+    setState(() => _luckyHourActive = status['active'] == true);
   }
 
   Future<void> _claimDaily() async {
@@ -184,6 +191,14 @@ class _JackpotScreenState extends State<JackpotScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text('Tickets: $_tickets', style: const TextStyle(fontSize: 20)),
+            if (_luckyHourActive)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'Lucky hour! Regular spins are free right now.',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                ),
+              ),
             if (_dailyMessage != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -220,6 +235,14 @@ class _JackpotScreenState extends State<JackpotScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Column(
                     children: [
+                      if (_result!['mutualPrompt'] == true)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            'You both picked this prompt!',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.pink),
+                          ),
+                        ),
                       Text(
                         _result!['prompt']['prompt'],
                         style: const TextStyle(fontWeight: FontWeight.bold),
@@ -247,7 +270,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
             ],
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: _spinning || _tickets == 0 ? null : () => _spin(),
+              onPressed: _spinning || (_tickets == 0 && !_luckyHourActive) ? null : () => _spin(),
               child: const Text('Spin the Jackpot'),
             ),
             const SizedBox(height: 8),
