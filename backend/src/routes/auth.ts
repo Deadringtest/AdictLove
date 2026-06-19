@@ -48,6 +48,9 @@ router.post('/register', authLimiter, async (req, res) => {
   if (!VALID_GENDERS.includes(gender)) {
     return res.status(400).json({ error: 'Invalid gender value' });
   }
+  if (typeof displayName !== 'string' || displayName.trim().length === 0 || displayName.length > 50) {
+    return res.status(400).json({ error: 'Name must be 1-50 characters' });
+  }
 
   const age = Math.floor((Date.now() - new Date(birthdate).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
   if (age < 18) {

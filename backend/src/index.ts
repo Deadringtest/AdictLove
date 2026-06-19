@@ -2,6 +2,7 @@ import 'dotenv/config';
 import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import path from 'path';
 import authRoutes from './routes/auth';
 import preferencesRoutes from './routes/preferences';
@@ -14,9 +15,17 @@ import adminRoutes from './routes/admin';
 import { setupWebSocketServer } from './ws';
 
 const app = express();
+app.use(helmet());
 app.use(cors());
-app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use(express.json({ limit: '1mb' }));
+// Uploaded files are validated by real content (magic bytes) before being
+// written to disk (see profile.ts), so this only ever serves images -- force
+// the content type and forbid inline script execution as defense in depth.
+app.use(
+  '/uploads',
+  helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'none'"] } } }),
+  express.static(path.join(__dirname, '..', 'uploads'), { setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff') })
+);
 
 app.use('/auth', authRoutes);
 app.use('/preferences', preferencesRoutes);
@@ -36,6 +45,12 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   console.error(err);
   if (err?.code === '23505') {
     return res.status(409).json({ error: 'That value is already in use' });
+  }
+  if (err?.type === 'entity.too.large' || err?.status === 413) {
+    return res.status(413).json({ error: 'Request body too large' });
+  }
+  if (err?.status >= 400 && err?.status < 500) {
+    return res.status(err.status).json({ error: err.message ?? 'Bad request' });
   }
   res.status(500).json({ error: 'Internal server error' });
 });

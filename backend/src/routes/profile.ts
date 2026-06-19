@@ -2,30 +2,55 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import crypto from 'crypto';
+import fs from 'fs/promises';
 import { pool } from '../db';
 import { AuthedRequest, requireAuth } from '../auth';
 
 const router = Router();
 const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads');
 
-const storage = multer.diskStorage({
-  destination: UPLOAD_DIR,
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${crypto.randomUUID()}${ext}`);
-  },
-});
+// Client-supplied mimetype/filename can't be trusted (trivially spoofed),
+// so the real file type is sniffed from its magic bytes before it's ever
+// written to disk, and the extension we save it under comes from that
+// detection -- never from the attacker-controlled originalname.
+function sniffImageExtension(buffer: Buffer): string | null {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return '.jpg';
+  }
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47 &&
+    buffer[4] === 0x0d && buffer[5] === 0x0a && buffer[6] === 0x1a && buffer[7] === 0x0a
+  ) {
+    return '.png';
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    return '.webp';
+  }
+  return null;
+}
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    if (!/^image\/(jpeg|png|webp)$/.test(file.mimetype)) {
-      return cb(new Error('Only JPEG, PNG, or WEBP images are allowed'));
-    }
-    cb(null, true);
-  },
 });
+
+async function saveValidatedImage(file: Express.Multer.File | undefined): Promise<string> {
+  if (!file) {
+    throw Object.assign(new Error('No photo uploaded'), { status: 400 });
+  }
+  const ext = sniffImageExtension(file.buffer);
+  if (!ext) {
+    throw Object.assign(new Error('Only JPEG, PNG, or WEBP images are allowed'), { status: 400 });
+  }
+  const filename = `${crypto.randomUUID()}${ext}`;
+  await fs.writeFile(path.join(UPLOAD_DIR, filename), file.buffer);
+  return filename;
+}
 
 router.get('/', requireAuth, async (req: AuthedRequest, res) => {
   const user = await pool.query(
@@ -85,8 +110,17 @@ router.put('/prompts', requireAuth, async (req: AuthedRequest, res) => {
   }
 });
 
+const MAX_BIO_LENGTH = 500;
+const MAX_PRONOUNS_LENGTH = 50;
+
 router.put('/', requireAuth, async (req: AuthedRequest, res) => {
   const { bio, pronouns } = req.body;
+  if (typeof bio === 'string' && bio.length > MAX_BIO_LENGTH) {
+    return res.status(400).json({ error: `Bio must be ${MAX_BIO_LENGTH} characters or fewer` });
+  }
+  if (typeof pronouns === 'string' && pronouns.length > MAX_PRONOUNS_LENGTH) {
+    return res.status(400).json({ error: `Pronouns must be ${MAX_PRONOUNS_LENGTH} characters or fewer` });
+  }
   const result = await pool.query(
     `UPDATE users SET bio = $1, pronouns = $2 WHERE id = $3
      RETURNING id, display_name, bio, pronouns`,
@@ -96,13 +130,16 @@ router.put('/', requireAuth, async (req: AuthedRequest, res) => {
 });
 
 router.post('/photos', requireAuth, upload.single('photo'), async (req: AuthedRequest, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No photo uploaded' });
+  let filename: string;
+  try {
+    filename = await saveValidatedImage(req.file);
+  } catch (err: any) {
+    return res.status(err.status ?? 400).json({ error: err.message });
   }
   const count = await pool.query('SELECT COUNT(*) FROM photos WHERE user_id = $1', [req.userId]);
   const result = await pool.query(
     'INSERT INTO photos (user_id, file_path, position) VALUES ($1, $2, $3) RETURNING id, file_path, position',
-    [req.userId, `/uploads/${req.file.filename}`, Number(count.rows[0].count)]
+    [req.userId, `/uploads/${filename}`, Number(count.rows[0].count)]
   );
   res.status(201).json(result.rows[0]);
 });
@@ -129,13 +166,16 @@ router.get('/verification/pose', requireAuth, async (req: AuthedRequest, res) =>
 });
 
 router.post('/verification', requireAuth, upload.single('photo'), async (req: AuthedRequest, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No verification photo uploaded' });
+  let filename: string;
+  try {
+    filename = await saveValidatedImage(req.file);
+  } catch (err: any) {
+    return res.status(err.status ?? 400).json({ error: err.message });
   }
   const result = await pool.query(
     `UPDATE users SET verification_photo = $1, verification_status = 'pending'
      WHERE id = $2 RETURNING id, verification_status`,
-    [`/uploads/${req.file.filename}`, req.userId]
+    [`/uploads/${filename}`, req.userId]
   );
   res.status(201).json(result.rows[0]);
 });
