@@ -293,19 +293,31 @@ router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, 
 
   let mega = false;
   if (wantsMega) {
-    const user = await pool.query(
-      `SELECT (last_mega_like_at IS NULL OR last_mega_like_at < CURRENT_DATE) AS available
-       FROM users WHERE id = $1`,
-      [req.userId]
-    );
-    if (user.rows[0]?.available) {
-      mega = true;
-      await pool.query('UPDATE users SET last_mega_like_at = CURRENT_DATE WHERE id = $1', [req.userId]);
-      await pool.query(
-        'UPDATE jackpot_draws SET mega_like = true WHERE user_id = $1 AND matched_user_id = $2',
-        [req.userId, otherUserId]
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const user = await client.query(
+        `SELECT (last_mega_like_at IS NULL OR last_mega_like_at < CURRENT_DATE) AS available, display_name
+         FROM users WHERE id = $1 FOR UPDATE`,
+        [req.userId]
       );
-      await pool.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [otherUserId]);
+      if (user.rows[0]?.available) {
+        mega = true;
+        await client.query('UPDATE users SET last_mega_like_at = CURRENT_DATE WHERE id = $1', [req.userId]);
+        await client.query(
+          'UPDATE jackpot_draws SET mega_like = true WHERE user_id = $1 AND matched_user_id = $2',
+          [req.userId, otherUserId]
+        );
+        await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [otherUserId]);
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+    if (mega) {
       const me = await pool.query('SELECT display_name FROM users WHERE id = $1', [req.userId]);
       sendToUser(otherUserId, 'mega_like', { fromUserId: req.userId, displayName: me.rows[0].display_name });
     }

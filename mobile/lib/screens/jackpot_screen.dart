@@ -47,8 +47,13 @@ class _JackpotScreenState extends State<JackpotScreen> {
   }
 
   Future<void> _refreshLuckyHour() async {
-    final status = await _api.getLuckyHour();
-    setState(() => _luckyHourActive = status['active'] == true);
+    try {
+      final status = await _api.getLuckyHour();
+      if (!mounted) return;
+      setState(() => _luckyHourActive = status['active'] == true);
+    } catch (_) {
+      // Non-critical: lucky-hour banner just won't show.
+    }
   }
 
   Future<void> _claimDaily() async {

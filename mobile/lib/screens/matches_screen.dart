@@ -15,6 +15,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
   final _api = ApiService();
   List<Map<String, dynamic>> _matches = [];
   bool _loading = true;
+  String? _error;
   StreamSubscription? _matchSub;
   StreamSubscription? _messageSub;
 
@@ -34,11 +35,19 @@ class _MatchesScreenState extends State<MatchesScreen> {
   }
 
   Future<void> _load() async {
-    final matches = await _api.getMatches();
-    setState(() {
-      _matches = matches;
-      _loading = false;
-    });
+    try {
+      final matches = await _api.getMatches();
+      setState(() {
+        _matches = matches;
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString().replaceFirst('Exception: ', '');
+        _loading = false;
+      });
+    }
   }
 
   @override
@@ -47,7 +56,9 @@ class _MatchesScreenState extends State<MatchesScreen> {
       appBar: AppBar(title: const Text('Matches')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _matches.isEmpty
+          : _error != null
+              ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
+              : _matches.isEmpty
               ? const Center(child: Text('No matches yet — keep spinning!'))
               : RefreshIndicator(
                   onRefresh: _load,
