@@ -65,6 +65,18 @@ class RealtimeService {
               body: '${data['displayName']} mega-liked you.',
             );
             break;
+          case 'admirer_waiting':
+            NotificationService.instance.show(
+              title: 'Someone is waiting for you',
+              body: 'Spin the jackpot to find out who liked you!',
+            );
+            break;
+          case 'gift_ticket':
+            NotificationService.instance.show(
+              title: 'Ticket gift!',
+              body: '${data['displayName']} sent you a jackpot ticket.',
+            );
+            break;
         }
       },
       onError: (_) => _scheduleReconnect(),

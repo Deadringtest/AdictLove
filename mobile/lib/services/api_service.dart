@@ -202,6 +202,7 @@ class ApiService {
     return {
       'result': body['result'],
       'decoys': (body['decoys'] as List?)?.cast<Map<String, dynamic>>() ?? [],
+      'sharedCategories': body['sharedCategories'] ?? 0,
     };
   }
 
@@ -223,6 +224,7 @@ class ApiService {
     return {
       'result': body['result'],
       'decoys': (body['decoys'] as List?)?.cast<Map<String, dynamic>>() ?? [],
+      'sharedCategories': body['sharedCategories'] ?? 0,
     };
   }
 
@@ -233,6 +235,37 @@ class ApiService {
       throw Exception(body['error'] ?? 'Claim failed');
     }
     return body;
+  }
+
+  Future<List<Map<String, dynamic>>> getPrompts() async {
+    final res = await http.get(Uri.parse('$baseUrl/profile/prompts'), headers: await _authHeaders());
+    final body = _decodeOrThrow(res, 200) as List;
+    return body.cast<Map<String, dynamic>>();
+  }
+
+  Future<void> setPromptAnswers(List<Map<String, dynamic>> answers) async {
+    final res = await http.put(
+      Uri.parse('$baseUrl/profile/prompts'),
+      headers: await _authHeaders(),
+      body: jsonEncode({'answers': answers}),
+    );
+    _decodeOrThrow(res, 200);
+  }
+
+  Future<String> getVerificationPose() async {
+    final res = await http.get(Uri.parse('$baseUrl/profile/verification/pose'), headers: await _authHeaders());
+    final body = _decodeOrThrow(res, 200);
+    return body['pose'];
+  }
+
+  Future<Map<String, dynamic>> getLuckyHour() async {
+    final res = await http.get(Uri.parse('$baseUrl/jackpot/lucky-hour'), headers: await _authHeaders());
+    return _decodeOrThrow(res, 200);
+  }
+
+  Future<void> giftTicket(int matchId) async {
+    final res = await http.post(Uri.parse('$baseUrl/matches/$matchId/gift-ticket'), headers: await _authHeaders());
+    _decodeOrThrow(res, 200);
   }
 
   Future<Map<String, dynamic>> watchAdForTicket() async {

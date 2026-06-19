@@ -21,6 +21,8 @@ class _JackpotScreenState extends State<JackpotScreen> {
   List<String> _resultPhotos = [];
   String? _error;
   String? _dailyMessage;
+  int _sharedCategories = 0;
+  bool _luckyHourActive = false;
 
   List<Map<String, dynamic>> _reel = [];
   int _reelIndex = 0;
@@ -30,6 +32,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
   void initState() {
     super.initState();
     _refreshTickets();
+    _refreshLuckyHour();
   }
 
   @override
@@ -43,10 +46,23 @@ class _JackpotScreenState extends State<JackpotScreen> {
     setState(() => _tickets = tickets);
   }
 
+  Future<void> _refreshLuckyHour() async {
+    try {
+      final status = await _api.getLuckyHour();
+      if (!mounted) return;
+      setState(() => _luckyHourActive = status['active'] == true);
+    } catch (_) {
+      // Non-critical: lucky-hour banner just won't show.
+    }
+  }
+
   Future<void> _claimDaily() async {
     try {
       final result = await _api.claimDailyTickets();
-      setState(() => _dailyMessage = 'Claimed ${result['granted']} tickets! Streak: ${result['streak']} days');
+      final milestone = result['milestone'];
+      setState(() => _dailyMessage = milestone != null
+          ? '$milestone-day streak! Claimed ${result['granted']} bonus tickets!'
+          : 'Claimed ${result['granted']} tickets! Streak: ${result['streak']} days');
       await _refreshTickets();
     } catch (e) {
       setState(() => _dailyMessage = e.toString().replaceFirst('Exception: ', ''));
@@ -89,6 +105,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
       _reel = [...decoys, result];
       if (_reel.length < 2) _reel = [result, result, result];
       _reelIndex = 0;
+      _sharedCategories = (response['sharedCategories'] as num?)?.toInt() ?? 0;
 
       await _animateReel();
 
@@ -179,6 +196,14 @@ class _JackpotScreenState extends State<JackpotScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text('Tickets: $_tickets', style: const TextStyle(fontSize: 20)),
+            if (_luckyHourActive)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'Lucky hour! Regular spins are free right now.',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                ),
+              ),
             if (_dailyMessage != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -200,7 +225,39 @@ class _JackpotScreenState extends State<JackpotScreen> {
                   ],
                 ],
               ),
+              if (_sharedCategories > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'You have $_sharedCategories thing${_sharedCategories > 1 ? 's' : ''} in common',
+                    style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.pink),
+                  ),
+                ),
               if (_result!['bio'] != null && (_result!['bio'] as String).isNotEmpty) Text(_result!['bio']),
+              if (_result!['prompt'] != null) ...[
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    children: [
+                      if (_result!['mutualPrompt'] == true)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            'You both picked this prompt!',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.pink),
+                          ),
+                        ),
+                      Text(
+                        _result!['prompt']['prompt'],
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
+                      ),
+                      Text(_result!['prompt']['answer'], textAlign: TextAlign.center),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -218,7 +275,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
             ],
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: _spinning || _tickets == 0 ? null : () => _spin(),
+              onPressed: _spinning || (_tickets == 0 && !_luckyHourActive) ? null : () => _spin(),
               child: const Text('Spin the Jackpot'),
             ),
             const SizedBox(height: 8),

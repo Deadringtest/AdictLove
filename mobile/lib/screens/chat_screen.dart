@@ -68,14 +68,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadMessages() async {
-    final messages = await _api.getMessages(widget.matchId);
-    if (!mounted) return;
-    setState(() => _messages = messages);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      }
-    });
+    try {
+      final messages = await _api.getMessages(widget.matchId);
+      if (!mounted) return;
+      setState(() => _messages = messages);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
   }
 
   Future<void> _send() async {
@@ -104,9 +111,31 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
     if (confirmed != true) return;
-    await _api.blockUser(widget.otherUserId);
-    if (!mounted) return;
-    Navigator.of(context).pop();
+    try {
+      await _api.blockUser(widget.otherUserId);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  Future<void> _giftTicket() async {
+    try {
+      await _api.giftTicket(widget.matchId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sent ${widget.otherUserName} a ticket!')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
   }
 
   Future<void> _report() async {
@@ -140,6 +169,11 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: Text(widget.otherUserName),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.card_giftcard_outlined),
+            tooltip: 'Gift a jackpot ticket',
+            onPressed: _giftTicket,
+          ),
           PopupMenuButton<String>(
             onSelected: (value) => value == 'block' ? _block() : _report(),
             itemBuilder: (_) => const [

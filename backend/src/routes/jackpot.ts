@@ -9,6 +9,28 @@ const router = Router();
 const DAILY_TICKET_CAP = 5;
 const BASE_DAILY_TICKETS = 3;
 const MAX_AD_TICKETS_PER_DAY = 3;
+const STREAK_MILESTONES = [7, 30, 100];
+const MILESTONE_BONUS_TICKETS = 2;
+
+// A deterministic "lucky hour" each day (changes daily, looks random to
+// players) where regular spins are free. Pure delight mechanic, no real
+// money involved -- just better odds of playing more that day.
+function luckyHourFor(date: Date): number {
+  const dayKey = date.toISOString().slice(0, 10);
+  let hash = 0;
+  for (const char of dayKey) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash % 24;
+}
+
+function isLuckyHourNow(): boolean {
+  const now = new Date();
+  return now.getUTCHours() === luckyHourFor(now);
+}
+
+router.get('/lucky-hour', requireAuth, async (_req, res) => {
+  const now = new Date();
+  res.json({ hourUtc: luckyHourFor(now), active: isLuckyHourNow() });
+});
 
 router.get('/tickets', requireAuth, async (req: AuthedRequest, res) => {
   const result = await pool.query(
@@ -22,6 +44,13 @@ router.get('/tickets', requireAuth, async (req: AuthedRequest, res) => {
 // get tickets through the daily claim below.
 router.post('/tickets/grant', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
   const targetUserId = req.body.userId ?? req.userId;
+  if (!Number.isInteger(targetUserId)) {
+    return res.status(400).json({ error: 'userId must be an integer' });
+  }
+  const target = await pool.query('SELECT id FROM users WHERE id = $1', [targetUserId]);
+  if (target.rows.length === 0) {
+    return res.status(404).json({ error: 'User not found' });
+  }
   await pool.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [targetUserId]);
   res.status(201).json({ granted: 1 });
 });
@@ -32,10 +61,10 @@ router.post('/tickets/claim-daily', requireAuth, async (req: AuthedRequest, res)
     await client.query('BEGIN');
 
     const user = await client.query(
-      'SELECT ticket_streak, last_ticket_claim FROM users WHERE id = $1 FOR UPDATE',
+      'SELECT ticket_streak, last_ticket_claim, last_streak_milestone FROM users WHERE id = $1 FOR UPDATE',
       [req.userId]
     );
-    const { ticket_streak: streak, last_ticket_claim: lastClaim } = user.rows[0];
+    const { ticket_streak: streak, last_ticket_claim: lastClaim, last_streak_milestone: lastMilestone } = user.rows[0];
 
     const today = await client.query<{ today: string; isSameDay: boolean; isYesterday: boolean }>(
       `SELECT CURRENT_DATE::text AS today,
@@ -61,13 +90,23 @@ router.post('/tickets/claim-daily', requireAuth, async (req: AuthedRequest, res)
     for (let i = 0; i < toGrant; i++) {
       await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [req.userId]);
     }
+
+    const milestone = STREAK_MILESTONES.find((m) => newStreak >= m && lastMilestone < m);
+    let milestoneBonus = 0;
+    if (milestone) {
+      milestoneBonus = MILESTONE_BONUS_TICKETS;
+      for (let i = 0; i < milestoneBonus; i++) {
+        await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [req.userId]);
+      }
+    }
+
     await client.query(
-      'UPDATE users SET ticket_streak = $1, last_ticket_claim = CURRENT_DATE WHERE id = $2',
-      [newStreak, req.userId]
+      'UPDATE users SET ticket_streak = $1, last_ticket_claim = CURRENT_DATE, last_streak_milestone = $2 WHERE id = $3',
+      [newStreak, milestone ?? lastMilestone, req.userId]
     );
 
     await client.query('COMMIT');
-    res.json({ granted: toGrant, streak: newStreak });
+    res.json({ granted: toGrant + milestoneBonus, streak: newStreak, milestone: milestone ?? null });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -146,6 +185,7 @@ async function pickCandidate(
   }
   if (pool_.length === 0) return null;
 
+
   let best = pool_[0];
   let bestScore = Infinity;
   for (const row of pool_) {
@@ -155,7 +195,7 @@ async function pickCandidate(
       best = row;
     }
   }
-  return best.id as number;
+  return { id: best.id as number, sharedCategories: Number(best.shared_categories) };
 }
 
 async function spendTickets(client: PoolClient, userId: number, count: number) {
@@ -176,19 +216,22 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
   try {
     await client.query('BEGIN');
 
-    const spent = await spendTickets(client, req.userId!, cost);
+    // Regular spins are free during the daily lucky hour; boost still costs.
+    const actualCost = !boosted && isLuckyHourNow() ? 0 : cost;
+    const spent = await spendTickets(client, req.userId!, actualCost);
     if (!spent) {
       await client.query('ROLLBACK');
       return res.status(402).json({ error: 'Not enough jackpot tickets available' });
     }
 
     const prefs = await client.query('SELECT * FROM preferences WHERE user_id = $1', [req.userId]);
-    const matchedUserId = await pickCandidate(client, req.userId!, prefs.rows[0], boosted);
+    const picked = await pickCandidate(client, req.userId!, prefs.rows[0], boosted);
 
-    if (matchedUserId === null) {
+    if (picked === null) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'No new matches available right now' });
     }
+    const { id: matchedUserId, sharedCategories } = picked;
 
     await client.query(
       'INSERT INTO jackpot_draws (user_id, matched_user_id) VALUES ($1, $2)',
@@ -201,6 +244,22 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
        FROM users u WHERE u.id = $1`,
       [matchedUserId]
     );
+
+    const prompt = await client.query(
+      `SELECT p.text AS prompt, up.answer, up.prompt_id FROM user_prompts up
+       JOIN prompts p ON p.id = up.prompt_id
+       WHERE up.user_id = $1 ORDER BY up.position LIMIT 1`,
+      [matchedUserId]
+    );
+
+    let mutualPrompt = false;
+    if (prompt.rows[0]) {
+      const mine = await client.query(
+        'SELECT 1 FROM user_prompts WHERE user_id = $1 AND prompt_id = $2',
+        [req.userId, prompt.rows[0].prompt_id]
+      );
+      mutualPrompt = mine.rows.length > 0;
+    }
 
     const decoys = await client.query(
       `SELECT u.id, u.display_name,
@@ -216,7 +275,11 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
     );
 
     await client.query('COMMIT');
-    res.json({ result: profile.rows[0], decoys: decoys.rows });
+    res.json({
+      result: { ...profile.rows[0], prompt: prompt.rows[0] ?? null, mutualPrompt },
+      decoys: decoys.rows,
+      sharedCategories,
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -237,19 +300,31 @@ router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, 
 
   let mega = false;
   if (wantsMega) {
-    const user = await pool.query(
-      `SELECT (last_mega_like_at IS NULL OR last_mega_like_at < CURRENT_DATE) AS available
-       FROM users WHERE id = $1`,
-      [req.userId]
-    );
-    if (user.rows[0]?.available) {
-      mega = true;
-      await pool.query('UPDATE users SET last_mega_like_at = CURRENT_DATE WHERE id = $1', [req.userId]);
-      await pool.query(
-        'UPDATE jackpot_draws SET mega_like = true WHERE user_id = $1 AND matched_user_id = $2',
-        [req.userId, otherUserId]
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const user = await client.query(
+        `SELECT (last_mega_like_at IS NULL OR last_mega_like_at < CURRENT_DATE) AS available, display_name
+         FROM users WHERE id = $1 FOR UPDATE`,
+        [req.userId]
       );
-      await pool.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [otherUserId]);
+      if (user.rows[0]?.available) {
+        mega = true;
+        await client.query('UPDATE users SET last_mega_like_at = CURRENT_DATE WHERE id = $1', [req.userId]);
+        await client.query(
+          'UPDATE jackpot_draws SET mega_like = true WHERE user_id = $1 AND matched_user_id = $2',
+          [req.userId, otherUserId]
+        );
+        await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [otherUserId]);
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+    if (mega) {
       const me = await pool.query('SELECT display_name FROM users WHERE id = $1', [req.userId]);
       sendToUser(otherUserId, 'mega_like', { fromUserId: req.userId, displayName: me.rows[0].display_name });
     }
@@ -279,6 +354,9 @@ router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, 
     return res.json({ mutualMatch: true, mega });
   }
 
+  // Not mutual yet -- nudge the liked person to come spin, without revealing
+  // who liked them (keeps the luck-based reveal intact on their side too).
+  sendToUser(otherUserId, 'admirer_waiting', {});
   res.json({ mutualMatch: false, mega });
 });
 

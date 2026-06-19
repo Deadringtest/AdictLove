@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../services/theme_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -12,7 +13,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProviderStateMixin {
-  late final TabController _tabController = TabController(length: 3, vsync: this);
+  late final TabController _tabController = TabController(length: 4, vsync: this);
 
   @override
   void dispose() {
@@ -27,10 +28,12 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         title: const Text('Settings'),
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
           tabs: const [
             Tab(text: 'Profile'),
             Tab(text: 'Preferences'),
             Tab(text: 'Appearance'),
+            Tab(text: 'Notifications'),
           ],
         ),
       ),
@@ -40,6 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           _ProfileTab(),
           _PreferencesTab(),
           _AppearanceTab(),
+          _NotificationsTab(),
         ],
       ),
     );
@@ -65,24 +69,47 @@ class _ProfileTabState extends State<_ProfileTab> {
   bool _saving = false;
   String? _message;
 
+  List<Map<String, dynamic>> _allPrompts = [];
+  final List<TextEditingController> _promptAnswerControllers =
+      List.generate(3, (_) => TextEditingController());
+  final List<int?> _selectedPromptIds = [null, null, null];
+
   @override
   void initState() {
     super.initState();
     _load();
   }
 
+  @override
+  void dispose() {
+    for (final controller in _promptAnswerControllers) {
+      controller.dispose();
+    }
+    _bioController.dispose();
+    _pronounsController.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final profile = await _api.getProfile();
     final categories = await _api.getCategories();
+    final allPrompts = await _api.getPrompts();
     setState(() {
       _bioController.text = profile['bio'] ?? '';
       _pronounsController.text = profile['pronouns'] ?? '';
       _photos = (profile['photos'] as List).cast<Map<String, dynamic>>();
       _allCategories = categories;
+      _allPrompts = allPrompts;
       _selectedCategoryIds = (profile['categories'] as List)
           .map((c) => c['id'] as int)
           .toSet();
       _verificationStatus = profile['verification_status'] ?? 'none';
+
+      final myPrompts = (profile['prompts'] as List).cast<Map<String, dynamic>>();
+      for (var i = 0; i < myPrompts.length && i < 3; i++) {
+        _selectedPromptIds[i] = myPrompts[i]['prompt_id'] as int;
+        _promptAnswerControllers[i].text = myPrompts[i]['answer'] as String;
+      }
       _loading = false;
     });
   }
@@ -95,6 +122,20 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   Future<void> _submitVerification() async {
+    final pose = await _api.getVerificationPose();
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Verification pose'),
+        content: Text('Take a selfie while you: $pose'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Take photo')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     final picked = await ImagePicker().pickImage(source: ImageSource.camera);
     if (picked == null) return;
     await _api.uploadVerificationPhoto(File(picked.path));
@@ -114,6 +155,13 @@ class _ProfileTabState extends State<_ProfileTab> {
     try {
       await _api.updateProfile(bio: _bioController.text.trim(), pronouns: _pronounsController.text.trim());
       await _api.setCategories(_selectedCategoryIds.toList());
+      final answers = <Map<String, dynamic>>[];
+      for (var i = 0; i < 3; i++) {
+        if (_selectedPromptIds[i] != null && _promptAnswerControllers[i].text.trim().isNotEmpty) {
+          answers.add({'promptId': _selectedPromptIds[i], 'answer': _promptAnswerControllers[i].text.trim()});
+        }
+      }
+      await _api.setPromptAnswers(answers);
       setState(() => _message = 'Saved!');
     } catch (e) {
       setState(() => _message = e.toString().replaceFirst('Exception: ', ''));
@@ -185,6 +233,35 @@ class _ProfileTabState extends State<_ProfileTab> {
           controller: _pronounsController,
           decoration: const InputDecoration(labelText: 'Pronouns', border: OutlineInputBorder()),
         ),
+        const SizedBox(height: 24),
+        Text('Icebreaker prompts', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        for (var i = 0; i < 3; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: _selectedPromptIds[i],
+                  decoration: InputDecoration(labelText: 'Prompt ${i + 1}', border: const OutlineInputBorder()),
+                  items: [
+                    for (final prompt in _allPrompts)
+                      DropdownMenuItem(value: prompt['id'] as int, child: Text(prompt['text'])),
+                  ],
+                  onChanged: (value) => setState(() => _selectedPromptIds[i] = value),
+                ),
+                if (_selectedPromptIds[i] != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: TextField(
+                      controller: _promptAnswerControllers[i],
+                      decoration: const InputDecoration(labelText: 'Your answer', border: OutlineInputBorder()),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         const SizedBox(height: 24),
         Text('Interests', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
@@ -428,6 +505,90 @@ class _AppearanceTab extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _NotificationsTab extends StatefulWidget {
+  const _NotificationsTab();
+
+  @override
+  State<_NotificationsTab> createState() => _NotificationsTabState();
+}
+
+class _NotificationsTabState extends State<_NotificationsTab> {
+  bool _loading = true;
+  bool _enabled = true;
+  TimeOfDay? _reminderTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final enabled = await NotificationService.instance.isEnabled();
+    final reminder = await NotificationService.instance.getReminderTime();
+    setState(() {
+      _enabled = enabled;
+      _reminderTime = reminder != null ? TimeOfDay(hour: reminder.$1, minute: reminder.$2) : null;
+      _loading = false;
+    });
+  }
+
+  Future<void> _setEnabled(bool value) async {
+    await NotificationService.instance.setEnabled(value);
+    setState(() => _enabled = value);
+  }
+
+  Future<void> _pickReminderTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _reminderTime ?? const TimeOfDay(hour: 18, minute: 0),
+    );
+    if (picked == null) return;
+    await NotificationService.instance.scheduleDailyReminder(picked.hour, picked.minute);
+    setState(() => _reminderTime = picked);
+  }
+
+  Future<void> _clearReminder() async {
+    await NotificationService.instance.cancelDailyReminder();
+    setState(() => _reminderTime = null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        SwitchListTile(
+          title: const Text('Enable notifications'),
+          subtitle: const Text('Matches, messages, mega likes, and ticket gifts'),
+          value: _enabled,
+          onChanged: _setEnabled,
+        ),
+        const SizedBox(height: 16),
+        Text('Daily reminder', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ListTile(
+          enabled: _enabled,
+          contentPadding: EdgeInsets.zero,
+          title: Text(_reminderTime == null ? 'Not set' : 'Remind me at ${_reminderTime!.format(context)}'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton(
+                onPressed: _enabled ? _pickReminderTime : null,
+                child: Text(_reminderTime == null ? 'Set' : 'Change'),
+              ),
+              if (_reminderTime != null)
+                TextButton(onPressed: _enabled ? _clearReminder : null, child: const Text('Clear')),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

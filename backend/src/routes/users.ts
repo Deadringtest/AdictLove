@@ -3,11 +3,20 @@ import { pool } from '../db';
 import { AuthedRequest, requireAuth } from '../auth';
 
 const router = Router();
+const MAX_REPORTS_PER_DAY = 5;
 
-router.get('/:id/photos', requireAuth, async (req, res) => {
+router.get('/:id/photos', requireAuth, async (req: AuthedRequest, res) => {
+  const targetId = Number(req.params.id);
+  const blocked = await pool.query(
+    `SELECT 1 FROM blocks WHERE (blocker_id = $1 AND blocked_id = $2) OR (blocker_id = $2 AND blocked_id = $1)`,
+    [req.userId, targetId]
+  );
+  if (blocked.rows.length > 0) {
+    return res.status(403).json({ error: 'Not available' });
+  }
   const result = await pool.query(
     'SELECT id, file_path, position FROM photos WHERE user_id = $1 ORDER BY position',
-    [req.params.id]
+    [targetId]
   );
   res.json(result.rows);
 });
@@ -51,6 +60,13 @@ router.post('/:id/report', requireAuth, async (req: AuthedRequest, res) => {
   }
   if (reportedId === req.userId) {
     return res.status(400).json({ error: 'Cannot report yourself' });
+  }
+  const todayCount = await pool.query(
+    `SELECT COUNT(*) FROM reports WHERE reporter_id = $1 AND created_at >= CURRENT_DATE`,
+    [req.userId]
+  );
+  if (Number(todayCount.rows[0].count) >= MAX_REPORTS_PER_DAY) {
+    return res.status(429).json({ error: 'Daily report limit reached' });
   }
   await pool.query('INSERT INTO reports (reporter_id, reported_id, reason) VALUES ($1, $2, $3)', [
     req.userId,

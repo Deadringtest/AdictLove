@@ -131,7 +131,7 @@ class _SignupBasicInfoScreenState extends State<SignupBasicInfoScreen> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                initialValue: _gender,
+                value: _gender,
                 decoration: const InputDecoration(labelText: 'Gender'),
                 items: const [
                   DropdownMenuItem(value: 'woman', child: Text('Woman')),
