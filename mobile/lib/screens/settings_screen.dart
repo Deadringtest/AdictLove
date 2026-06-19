@@ -60,6 +60,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   List<Map<String, dynamic>> _photos = [];
   List<Map<String, dynamic>> _allCategories = [];
   Set<int> _selectedCategoryIds = {};
+  String _verificationStatus = 'none';
   bool _loading = true;
   bool _saving = false;
   String? _message;
@@ -81,6 +82,7 @@ class _ProfileTabState extends State<_ProfileTab> {
       _selectedCategoryIds = (profile['categories'] as List)
           .map((c) => c['id'] as int)
           .toSet();
+      _verificationStatus = profile['verification_status'] ?? 'none';
       _loading = false;
     });
   }
@@ -89,6 +91,13 @@ class _ProfileTabState extends State<_ProfileTab> {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (picked == null) return;
     await _api.uploadPhoto(File(picked.path));
+    await _load();
+  }
+
+  Future<void> _submitVerification() async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.camera);
+    if (picked == null) return;
+    await _api.uploadVerificationPhoto(File(picked.path));
     await _load();
   }
 
@@ -197,6 +206,21 @@ class _ProfileTabState extends State<_ProfileTab> {
                   });
                 },
               ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        Text('Verification', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Icon(
+              _verificationStatus == 'approved' ? Icons.verified : Icons.shield_outlined,
+              color: _verificationStatus == 'approved' ? Colors.blue : Colors.grey,
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Status: $_verificationStatus')),
+            if (_verificationStatus == 'none' || _verificationStatus == 'rejected')
+              TextButton(onPressed: _submitVerification, child: const Text('Verify with selfie')),
           ],
         ),
         const SizedBox(height: 24),

@@ -29,7 +29,7 @@ const upload = multer({
 
 router.get('/', requireAuth, async (req: AuthedRequest, res) => {
   const user = await pool.query(
-    `SELECT id, email, display_name, birthdate, gender, pronouns, bio, email_verified
+    `SELECT id, email, display_name, birthdate, gender, pronouns, bio, email_verified, verification_status
      FROM users WHERE id = $1`,
     [req.userId]
   );
@@ -71,6 +71,18 @@ router.post('/photos', requireAuth, upload.single('photo'), async (req: AuthedRe
 router.delete('/photos/:id', requireAuth, async (req: AuthedRequest, res) => {
   await pool.query('DELETE FROM photos WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
   res.status(204).end();
+});
+
+router.post('/verification', requireAuth, upload.single('photo'), async (req: AuthedRequest, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No verification photo uploaded' });
+  }
+  const result = await pool.query(
+    `UPDATE users SET verification_photo = $1, verification_status = 'pending'
+     WHERE id = $2 RETURNING id, verification_status`,
+    [`/uploads/${req.file.filename}`, req.userId]
+  );
+  res.status(201).json(result.rows[0]);
 });
 
 router.put('/categories', requireAuth, async (req: AuthedRequest, res) => {

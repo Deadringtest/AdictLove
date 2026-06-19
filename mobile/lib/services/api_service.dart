@@ -205,12 +205,66 @@ class ApiService {
     };
   }
 
-  Future<bool> likeSpinResult(int matchedUserId) async {
+  Future<bool> likeSpinResult(int matchedUserId, {bool mega = false}) async {
     final res = await http.post(
       Uri.parse('$baseUrl/jackpot/spin/$matchedUserId/like'),
       headers: await _authHeaders(),
+      body: jsonEncode({'mega': mega}),
     );
     return jsonDecode(res.body)['mutualMatch'] == true;
+  }
+
+  Future<Map<String, dynamic>> spinBoost() async {
+    final res = await http.post(Uri.parse('$baseUrl/jackpot/spin/boost'), headers: await _authHeaders());
+    final body = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      throw Exception(body['error'] ?? 'Boost spin failed');
+    }
+    return {
+      'result': body['result'],
+      'decoys': (body['decoys'] as List?)?.cast<Map<String, dynamic>>() ?? [],
+    };
+  }
+
+  Future<Map<String, dynamic>> claimDailyTickets() async {
+    final res = await http.post(Uri.parse('$baseUrl/jackpot/tickets/claim-daily'), headers: await _authHeaders());
+    final body = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      throw Exception(body['error'] ?? 'Claim failed');
+    }
+    return body;
+  }
+
+  Future<void> blockUser(int userId) async {
+    final res = await http.post(Uri.parse('$baseUrl/users/$userId/block'), headers: await _authHeaders());
+    _decodeOrThrow(res, 201);
+  }
+
+  Future<void> reportUser(int userId, String reason) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/users/$userId/report'),
+      headers: await _authHeaders(),
+      body: jsonEncode({'reason': reason}),
+    );
+    _decodeOrThrow(res, 201);
+  }
+
+  Future<void> markRead(int matchId) async {
+    final res = await http.post(Uri.parse('$baseUrl/matches/$matchId/read'), headers: await _authHeaders());
+    _decodeOrThrow(res, 200);
+  }
+
+  Future<void> uploadVerificationPhoto(File file) async {
+    final headers = await _authHeaders();
+    headers.remove('Content-Type');
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/profile/verification'))
+      ..headers.addAll(headers)
+      ..files.add(await http.MultipartFile.fromPath('photo', file.path));
+    final streamed = await request.send();
+    if (streamed.statusCode != 201) {
+      final body = await streamed.stream.bytesToString();
+      throw Exception(jsonDecode(body)['error'] ?? 'Verification upload failed');
+    }
   }
 
   Future<List<Map<String, dynamic>>> getUserPhotos(int userId) async {

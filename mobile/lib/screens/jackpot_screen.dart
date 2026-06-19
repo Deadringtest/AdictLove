@@ -16,9 +16,11 @@ class _JackpotScreenState extends State<JackpotScreen> {
   final _api = ApiService();
   int _tickets = 0;
   bool _spinning = false;
+  bool _boosted = false;
   Map<String, dynamic>? _result;
   List<String> _resultPhotos = [];
   String? _error;
+  String? _dailyMessage;
 
   List<Map<String, dynamic>> _reel = [];
   int _reelIndex = 0;
@@ -41,15 +43,26 @@ class _JackpotScreenState extends State<JackpotScreen> {
     setState(() => _tickets = tickets);
   }
 
-  Future<void> _spin() async {
+  Future<void> _claimDaily() async {
+    try {
+      final result = await _api.claimDailyTickets();
+      setState(() => _dailyMessage = 'Claimed ${result['granted']} tickets! Streak: ${result['streak']} days');
+      await _refreshTickets();
+    } catch (e) {
+      setState(() => _dailyMessage = e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _spin({bool boost = false}) async {
     setState(() {
       _spinning = true;
+      _boosted = boost;
       _error = null;
       _result = null;
     });
 
     try {
-      final response = await _api.spinJackpot();
+      final response = boost ? await _api.spinBoost() : await _api.spinJackpot();
       final result = response['result'] as Map<String, dynamic>;
       final decoys = response['decoys'] as List<Map<String, dynamic>>;
 
@@ -94,9 +107,9 @@ class _JackpotScreenState extends State<JackpotScreen> {
     return completer.future;
   }
 
-  Future<void> _likeResult() async {
+  Future<void> _likeResult({bool mega = false}) async {
     if (_result == null) return;
-    final mutual = await _api.likeSpinResult(_result!['id']);
+    final mutual = await _api.likeSpinResult(_result!['id'], mega: mega);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(mutual ? "It's a match!" : 'Liked! Waiting to see if they like you back.')),
@@ -125,6 +138,11 @@ class _JackpotScreenState extends State<JackpotScreen> {
         title: const Text('Jackpot'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.card_giftcard),
+            tooltip: 'Claim daily tickets',
+            onPressed: _claimDaily,
+          ),
+          IconButton(
             icon: const Icon(Icons.chat_bubble_outline),
             onPressed: () =>
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MatchesScreen())),
@@ -141,22 +159,59 @@ class _JackpotScreenState extends State<JackpotScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text('Tickets: $_tickets', style: const TextStyle(fontSize: 20)),
+            if (_dailyMessage != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(_dailyMessage!, style: const TextStyle(fontSize: 13)),
+              ),
             const SizedBox(height: 24),
             if (_spinning && _reel.isNotEmpty) _photoTile(_reel[_reelIndex]),
             if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
             if (!_spinning && _result != null) ...[
               PhotoGallery(photoPaths: _resultPhotos),
               const SizedBox(height: 12),
-              Text(_result!['display_name'], style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(_result!['display_name'], style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  if (_result!['verification_status'] == 'approved') ...[
+                    const SizedBox(width: 6),
+                    const Icon(Icons.verified, color: Colors.blue, size: 20),
+                  ],
+                ],
+              ),
               if (_result!['bio'] != null && (_result!['bio'] as String).isNotEmpty) Text(_result!['bio']),
               const SizedBox(height: 16),
-              ElevatedButton(onPressed: _likeResult, child: const Text('Like')),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton(onPressed: _likeResult, child: const Text('Like')),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: () => _likeResult(mega: true),
+                    icon: const Icon(Icons.star),
+                    label: const Text('Mega Like'),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+                  ),
+                ],
+              ),
             ],
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: _spinning || _tickets == 0 ? null : _spin,
+              onPressed: _spinning || _tickets == 0 ? null : () => _spin(),
               child: const Text('Spin the Jackpot'),
             ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _spinning || _tickets < 2 ? null : () => _spin(boost: true),
+              icon: const Icon(Icons.bolt),
+              label: const Text('Boost Spin (2 tickets)'),
+            ),
+            if (_boosted && _result != null && !_spinning)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('Boosted toward your shared interests', style: TextStyle(fontStyle: FontStyle.italic)),
+              ),
           ],
         ),
       ),

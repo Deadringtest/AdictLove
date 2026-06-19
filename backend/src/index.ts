@@ -9,6 +9,7 @@ import profileRoutes from './routes/profile';
 import categoriesRoutes from './routes/categories';
 import matchesRoutes from './routes/matches';
 import usersRoutes from './routes/users';
+import adminRoutes from './routes/admin';
 import { setupWebSocketServer } from './ws';
 
 const app = express();
@@ -23,6 +24,7 @@ app.use('/profile', profileRoutes);
 app.use('/categories', categoriesRoutes);
 app.use('/matches', matchesRoutes);
 app.use('/users', usersRoutes);
+app.use('/admin', adminRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 

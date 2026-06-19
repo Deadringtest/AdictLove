@@ -56,21 +56,34 @@ class _MatchesScreenState extends State<MatchesScreen> {
                     itemBuilder: (_, i) {
                       final match = _matches[i];
                       final photoUrl = _api.photoUrl(match['photo'] as String?);
+                      final unread = (match['unread_count'] as num?)?.toInt() ?? 0;
                       return ListTile(
                         leading: CircleAvatar(
                           backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
                           child: photoUrl == null ? const Icon(Icons.person) : null,
                         ),
-                        title: Text(match['display_name']),
+                        title: Row(
+                          children: [
+                            Text(match['display_name']),
+                            if (match['mega_match'] == true) ...[
+                              const SizedBox(width: 6),
+                              const Icon(Icons.star, size: 16, color: Colors.amber),
+                            ],
+                          ],
+                        ),
                         subtitle: Text(
                           match['last_message'] ?? 'Say hi!',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        trailing: unread > 0
+                            ? CircleAvatar(radius: 11, child: Text('$unread', style: const TextStyle(fontSize: 11)))
+                            : null,
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => ChatScreen(
                               matchId: match['match_id'],
+                              otherUserId: match['user_id'],
                               otherUserName: match['display_name'],
                             ),
                           ),

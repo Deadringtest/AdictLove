@@ -1,9 +1,13 @@
 import { Router } from 'express';
+import { PoolClient } from 'pg';
 import { pool } from '../db';
-import { AuthedRequest, requireAuth } from '../auth';
+import { AuthedRequest, requireAdmin, requireAuth } from '../auth';
 import { sendToUser } from '../ws';
 
 const router = Router();
+
+const DAILY_TICKET_CAP = 5;
+const BASE_DAILY_TICKETS = 3;
 
 router.get('/tickets', requireAuth, async (req: AuthedRequest, res) => {
   const result = await pool.query(
@@ -13,64 +17,148 @@ router.get('/tickets', requireAuth, async (req: AuthedRequest, res) => {
   res.json({ tickets: Number(result.rows[0].count) });
 });
 
-router.post('/tickets/grant', requireAuth, async (req: AuthedRequest, res) => {
-  await pool.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [req.userId]);
+// Admin-only manual grant, kept around for support/seeding. Regular players
+// get tickets through the daily claim below.
+router.post('/tickets/grant', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
+  const targetUserId = req.body.userId ?? req.userId;
+  await pool.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [targetUserId]);
   res.status(201).json({ granted: 1 });
 });
 
-router.post('/spin', requireAuth, async (req: AuthedRequest, res) => {
+router.post('/tickets/claim-daily', requireAuth, async (req: AuthedRequest, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    const ticket = await client.query(
-      `SELECT id FROM jackpot_tickets WHERE user_id = $1 AND spent = false LIMIT 1 FOR UPDATE`,
+    const user = await client.query(
+      'SELECT ticket_streak, last_ticket_claim FROM users WHERE id = $1 FOR UPDATE',
       [req.userId]
     );
-    if (ticket.rows.length === 0) {
+    const { ticket_streak: streak, last_ticket_claim: lastClaim } = user.rows[0];
+
+    const today = await client.query<{ today: string; isSameDay: boolean; isYesterday: boolean }>(
+      `SELECT CURRENT_DATE::text AS today,
+              ($1::date = CURRENT_DATE) AS "isSameDay",
+              ($1::date = CURRENT_DATE - INTERVAL '1 day') AS "isYesterday"`,
+      [lastClaim]
+    );
+    const { isSameDay, isYesterday } = today.rows[0];
+
+    if (isSameDay) {
       await client.query('ROLLBACK');
-      return res.status(402).json({ error: 'No jackpot tickets available' });
+      return res.status(409).json({ error: 'Already claimed today' });
+    }
+
+    const newStreak = isYesterday ? streak + 1 : 1;
+    const unspent = await client.query(
+      'SELECT COUNT(*) FROM jackpot_tickets WHERE user_id = $1 AND spent = false',
+      [req.userId]
+    );
+    const wanted = BASE_DAILY_TICKETS + Math.floor(newStreak / 3);
+    const toGrant = Math.max(0, Math.min(wanted, DAILY_TICKET_CAP - Number(unspent.rows[0].count)));
+
+    for (let i = 0; i < toGrant; i++) {
+      await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [req.userId]);
+    }
+    await client.query(
+      'UPDATE users SET ticket_streak = $1, last_ticket_claim = CURRENT_DATE WHERE id = $2',
+      [newStreak, req.userId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ granted: toGrant, streak: newStreak });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+// Weighted-random pick: shared categories raise the odds (more "luck") without
+// making the draw deterministic, via the standard -ln(random())/weight trick.
+// When `boosted`, the pool is narrowed to people who share at least one
+// category (if any such candidates exist) before the weighted draw runs.
+async function pickCandidate(
+  client: PoolClient,
+  userId: number,
+  pref: { interested_in?: string; min_age?: number; max_age?: number } | undefined,
+  boosted: boolean
+) {
+  const eligible = await client.query(
+    `SELECT u.id,
+            COALESCE((SELECT COUNT(*) FROM user_categories mine
+                      JOIN user_categories theirs ON theirs.category_id = mine.category_id
+                      WHERE mine.user_id = $1 AND theirs.user_id = u.id), 0) AS shared_categories
+     FROM users u
+     LEFT JOIN jackpot_draws d ON d.user_id = $1 AND d.matched_user_id = u.id
+     WHERE u.id != $1
+       AND ($2 = 'everyone' OR u.gender = $2)
+       AND date_part('year', age(u.birthdate)) BETWEEN $3 AND $4
+       AND d.id IS NULL
+       AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
+       AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1)`,
+    [userId, pref?.interested_in ?? 'everyone', pref?.min_age ?? 18, pref?.max_age ?? 99]
+  );
+
+  let pool_ = eligible.rows;
+  if (boosted) {
+    const shared = pool_.filter((row) => row.shared_categories > 0);
+    if (shared.length > 0) pool_ = shared;
+  }
+  if (pool_.length === 0) return null;
+
+  let best = pool_[0];
+  let bestScore = Infinity;
+  for (const row of pool_) {
+    const score = -Math.log(Math.random()) / (1 + 3 * row.shared_categories);
+    if (score < bestScore) {
+      bestScore = score;
+      best = row;
+    }
+  }
+  return best.id as number;
+}
+
+async function spendTickets(client: PoolClient, userId: number, count: number) {
+  const tickets = await client.query(
+    `SELECT id FROM jackpot_tickets WHERE user_id = $1 AND spent = false LIMIT $2 FOR UPDATE`,
+    [userId, count]
+  );
+  if (tickets.rows.length < count) return false;
+  await client.query(
+    'UPDATE jackpot_tickets SET spent = true WHERE id = ANY($1::int[])',
+    [tickets.rows.map((r) => r.id)]
+  );
+  return true;
+}
+
+async function performSpin(req: AuthedRequest, res: import('express').Response, cost: number, boosted: boolean) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const spent = await spendTickets(client, req.userId!, cost);
+    if (!spent) {
+      await client.query('ROLLBACK');
+      return res.status(402).json({ error: 'Not enough jackpot tickets available' });
     }
 
     const prefs = await client.query('SELECT * FROM preferences WHERE user_id = $1', [req.userId]);
-    const pref = prefs.rows[0];
+    const matchedUserId = await pickCandidate(client, req.userId!, prefs.rows[0], boosted);
 
-    // Weighted-random pick: shared categories raise the odds (more "luck") without
-    // making the draw deterministic, via the standard -ln(random())/weight trick.
-    const candidates = await client.query(
-      `WITH eligible AS (
-         SELECT u.id,
-                COALESCE((SELECT COUNT(*) FROM user_categories mine
-                          JOIN user_categories theirs ON theirs.category_id = mine.category_id
-                          WHERE mine.user_id = $1 AND theirs.user_id = u.id), 0) AS shared_categories
-         FROM users u
-         LEFT JOIN jackpot_draws d ON d.user_id = $1 AND d.matched_user_id = u.id
-         WHERE u.id != $1
-           AND ($2 = 'everyone' OR u.gender = $2)
-           AND date_part('year', age(u.birthdate)) BETWEEN $3 AND $4
-           AND d.id IS NULL
-       )
-       SELECT id FROM eligible
-       ORDER BY -ln(random()) / (1 + 3 * shared_categories)
-       LIMIT 1`,
-      [req.userId, pref?.interested_in ?? 'everyone', pref?.min_age ?? 18, pref?.max_age ?? 99]
-    );
-
-    if (candidates.rows.length === 0) {
+    if (matchedUserId === null) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'No new matches available right now' });
     }
 
-    const matchedUserId = candidates.rows[0].id;
-
-    await client.query('UPDATE jackpot_tickets SET spent = true WHERE id = $1', [ticket.rows[0].id]);
     await client.query(
       'INSERT INTO jackpot_draws (user_id, matched_user_id) VALUES ($1, $2)',
       [req.userId, matchedUserId]
     );
 
     const profile = await client.query(
-      `SELECT u.id, u.display_name, u.bio,
+      `SELECT u.id, u.display_name, u.bio, u.verification_status,
               (SELECT file_path FROM photos WHERE user_id = u.id ORDER BY position LIMIT 1) AS photo
        FROM users u WHERE u.id = $1`,
       [matchedUserId]
@@ -82,6 +170,8 @@ router.post('/spin', requireAuth, async (req: AuthedRequest, res) => {
        FROM users u
        WHERE u.id != $1 AND u.id != $2
          AND EXISTS (SELECT 1 FROM photos WHERE user_id = u.id)
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1)
        ORDER BY random()
        LIMIT 6`,
       [req.userId, matchedUserId]
@@ -95,10 +185,38 @@ router.post('/spin', requireAuth, async (req: AuthedRequest, res) => {
   } finally {
     client.release();
   }
-});
+}
+
+router.post('/spin', requireAuth, (req: AuthedRequest, res) => performSpin(req, res, 1, false));
+
+// Boost: spend 2 tickets to draw from a pool narrowed to shared interests
+// (when any exist) -- still luck, but better odds with people who like what you like.
+router.post('/spin/boost', requireAuth, (req: AuthedRequest, res) => performSpin(req, res, 2, true));
 
 router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, res) => {
   const otherUserId = Number(req.params.resultUserId);
+  const wantsMega = req.body.mega === true;
+
+  let mega = false;
+  if (wantsMega) {
+    const user = await pool.query(
+      `SELECT (last_mega_like_at IS NULL OR last_mega_like_at < CURRENT_DATE) AS available
+       FROM users WHERE id = $1`,
+      [req.userId]
+    );
+    if (user.rows[0]?.available) {
+      mega = true;
+      await pool.query('UPDATE users SET last_mega_like_at = CURRENT_DATE WHERE id = $1', [req.userId]);
+      await pool.query(
+        'UPDATE jackpot_draws SET mega_like = true WHERE user_id = $1 AND matched_user_id = $2',
+        [req.userId, otherUserId]
+      );
+      await pool.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [otherUserId]);
+      const me = await pool.query('SELECT display_name FROM users WHERE id = $1', [req.userId]);
+      sendToUser(otherUserId, 'mega_like', { fromUserId: req.userId, displayName: me.rows[0].display_name });
+    }
+  }
+
   const reciprocal = await pool.query(
     `SELECT 1 FROM jackpot_draws WHERE user_id = $1 AND matched_user_id = $2`,
     [otherUserId, req.userId]
@@ -107,9 +225,9 @@ router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, 
   if (reciprocal.rows.length > 0) {
     const [a, b] = [req.userId!, otherUserId].sort((x, y) => x - y);
     const inserted = await pool.query(
-      `INSERT INTO matches (user_a_id, user_b_id) VALUES ($1, $2)
+      `INSERT INTO matches (user_a_id, user_b_id, mega_match) VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING RETURNING id`,
-      [a, b]
+      [a, b, mega]
     );
     if (inserted.rows.length > 0) {
       const matchId = inserted.rows[0].id;
@@ -120,10 +238,10 @@ router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, 
       );
       sendToUser(otherUserId, 'match', { matchId, ...me.rows[0] });
     }
-    return res.json({ mutualMatch: true });
+    return res.json({ mutualMatch: true, mega });
   }
 
-  res.json({ mutualMatch: false });
+  res.json({ mutualMatch: false, mega });
 });
 
 export default router;

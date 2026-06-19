@@ -12,9 +12,15 @@ class RealtimeService {
   WebSocketChannel? _channel;
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _matchController = StreamController<Map<String, dynamic>>.broadcast();
+  final _readController = StreamController<Map<String, dynamic>>.broadcast();
+  final _typingController = StreamController<Map<String, dynamic>>.broadcast();
+  final _megaLikeController = StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<Map<String, dynamic>> get onMessage => _messageController.stream;
   Stream<Map<String, dynamic>> get onMatch => _matchController.stream;
+  Stream<Map<String, dynamic>> get onRead => _readController.stream;
+  Stream<Map<String, dynamic>> get onTyping => _typingController.stream;
+  Stream<Map<String, dynamic>> get onMegaLike => _megaLikeController.stream;
 
   int? _currentlyOpenMatchId;
   void setOpenMatch(int? matchId) => _currentlyOpenMatchId = matchId;
@@ -46,11 +52,28 @@ class RealtimeService {
               body: '${data['display_name']} matched with you.',
             );
             break;
+          case 'read':
+            _readController.add(data);
+            break;
+          case 'typing':
+            _typingController.add(data);
+            break;
+          case 'mega_like':
+            _megaLikeController.add(data);
+            NotificationService.instance.show(
+              title: 'Mega Like!',
+              body: '${data['displayName']} mega-liked you.',
+            );
+            break;
         }
       },
       onError: (_) => _scheduleReconnect(),
       onDone: () => _scheduleReconnect(),
     );
+  }
+
+  void sendTyping(int matchId) {
+    _channel?.sink.add(jsonEncode({'event': 'typing', 'data': {'matchId': matchId}}));
   }
 
   void _scheduleReconnect() {
