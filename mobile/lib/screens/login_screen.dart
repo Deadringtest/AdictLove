@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import 'jackpot_screen.dart';
+import 'signup/signup_basic_info_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -52,6 +53,11 @@ class _LoginScreenState extends State<LoginScreen> {
             ElevatedButton(
               onPressed: _loading ? null : _login,
               child: _loading ? const CircularProgressIndicator() : const Text('Log in'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => const SignupBasicInfoScreen())),
+              child: const Text("Don't have an account? Sign up"),
             ),
           ],
         ),
