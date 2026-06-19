@@ -44,6 +44,13 @@ router.get('/tickets', requireAuth, async (req: AuthedRequest, res) => {
 // get tickets through the daily claim below.
 router.post('/tickets/grant', requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
   const targetUserId = req.body.userId ?? req.userId;
+  if (!Number.isInteger(targetUserId)) {
+    return res.status(400).json({ error: 'userId must be an integer' });
+  }
+  const target = await pool.query('SELECT id FROM users WHERE id = $1', [targetUserId]);
+  if (target.rows.length === 0) {
+    return res.status(404).json({ error: 'User not found' });
+  }
   await pool.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [targetUserId]);
   res.status(201).json({ granted: 1 });
 });

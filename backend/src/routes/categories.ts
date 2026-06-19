@@ -3,6 +3,8 @@ import { pool } from '../db';
 import { AuthedRequest, requireAdmin, requireAuth } from '../auth';
 
 const router = Router();
+const MAX_NAME_LENGTH = 40;
+const MAX_SUGGESTIONS_PER_DAY = 5;
 
 router.get('/', requireAuth, async (_req, res) => {
   const result = await pool.query(
@@ -13,8 +15,16 @@ router.get('/', requireAuth, async (_req, res) => {
 
 router.post('/', requireAuth, async (req: AuthedRequest, res) => {
   const name = (req.body.name as string)?.trim();
-  if (!name) {
-    return res.status(400).json({ error: 'Category name is required' });
+  if (!name || name.length > MAX_NAME_LENGTH) {
+    return res.status(400).json({ error: `Category name is required and must be ${MAX_NAME_LENGTH} characters or fewer` });
+  }
+
+  const todaysCount = await pool.query(
+    `SELECT COUNT(*) FROM categories WHERE created_by = $1 AND created_at >= CURRENT_DATE`,
+    [req.userId]
+  );
+  if (Number(todaysCount.rows[0].count) >= MAX_SUGGESTIONS_PER_DAY) {
+    return res.status(429).json({ error: 'Daily category suggestion limit reached' });
   }
 
   const existing = await pool.query('SELECT id, status FROM categories WHERE name ILIKE $1', [name]);
