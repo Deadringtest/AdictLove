@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { AuthedRequest, requireAuth } from '../auth';
+import { sendToUser } from '../ws';
 
 const router = Router();
 
@@ -59,7 +60,12 @@ router.post('/:id/messages', requireAuth, async (req: AuthedRequest, res) => {
     'INSERT INTO messages (match_id, sender_id, body) VALUES ($1, $2, $3) RETURNING id, sender_id, body, created_at',
     [req.params.id, req.userId, body]
   );
-  res.status(201).json(result.rows[0]);
+
+  const message = result.rows[0];
+  const recipientId = match.user_a_id === req.userId ? match.user_b_id : match.user_a_id;
+  sendToUser(recipientId, 'message', { matchId: match.id, ...message });
+
+  res.status(201).json(message);
 });
 
 export default router;

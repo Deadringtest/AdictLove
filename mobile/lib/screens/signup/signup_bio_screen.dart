@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
+import '../../services/realtime_service.dart';
 import '../jackpot_screen.dart';
 
 class SignupBioScreen extends StatefulWidget {
@@ -22,6 +23,7 @@ class _SignupBioScreenState extends State<SignupBioScreen> {
     });
     try {
       await _api.updateProfile(bio: _bioController.text.trim());
+      await RealtimeService.instance.connect();
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const JackpotScreen()),

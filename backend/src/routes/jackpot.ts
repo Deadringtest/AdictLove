@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db';
 import { AuthedRequest, requireAuth } from '../auth';
+import { sendToUser } from '../ws';
 
 const router = Router();
 
@@ -96,10 +97,20 @@ router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, 
 
   if (reciprocal.rows.length > 0) {
     const [a, b] = [req.userId!, otherUserId].sort((x, y) => x - y);
-    await pool.query(
-      `INSERT INTO matches (user_a_id, user_b_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    const inserted = await pool.query(
+      `INSERT INTO matches (user_a_id, user_b_id) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING RETURNING id`,
       [a, b]
     );
+    if (inserted.rows.length > 0) {
+      const matchId = inserted.rows[0].id;
+      const me = await pool.query(
+        `SELECT display_name, (SELECT file_path FROM photos WHERE user_id = $1 ORDER BY position LIMIT 1) AS photo
+         FROM users WHERE id = $1`,
+        [req.userId]
+      );
+      sendToUser(otherUserId, 'match', { matchId, ...me.rows[0] });
+    }
     return res.json({ mutualMatch: true });
   }
 

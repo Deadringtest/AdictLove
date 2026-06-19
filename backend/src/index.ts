@@ -9,6 +9,7 @@ import profileRoutes from './routes/profile';
 import categoriesRoutes from './routes/categories';
 import matchesRoutes from './routes/matches';
 import usersRoutes from './routes/users';
+import { setupWebSocketServer } from './ws';
 
 const app = express();
 app.use(cors());
@@ -26,4 +27,5 @@ app.use('/users', usersRoutes);
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 const port = process.env.PORT ?? 3000;
-app.listen(port, () => console.log(`AdictLove API listening on port ${port}`));
+const server = app.listen(port, () => console.log(`AdictLove API listening on port ${port}`));
+setupWebSocketServer(server);

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/realtime_service.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.matchId, required this.otherUserName});
@@ -18,19 +19,23 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   List<Map<String, dynamic>> _messages = [];
   int? _myUserId;
-  Timer? _pollTimer;
+  StreamSubscription? _messageSub;
   bool _sending = false;
 
   @override
   void initState() {
     super.initState();
+    RealtimeService.instance.setOpenMatch(widget.matchId);
     _init();
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _loadMessages());
+    _messageSub = RealtimeService.instance.onMessage.listen((data) {
+      if (data['matchId'] == widget.matchId) _loadMessages();
+    });
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    RealtimeService.instance.setOpenMatch(null);
+    _messageSub?.cancel();
     super.dispose();
   }
 

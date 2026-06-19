@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/realtime_service.dart';
 import 'chat_screen.dart';
 
 class MatchesScreen extends StatefulWidget {
@@ -13,11 +15,22 @@ class _MatchesScreenState extends State<MatchesScreen> {
   final _api = ApiService();
   List<Map<String, dynamic>> _matches = [];
   bool _loading = true;
+  StreamSubscription? _matchSub;
+  StreamSubscription? _messageSub;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _matchSub = RealtimeService.instance.onMatch.listen((_) => _load());
+    _messageSub = RealtimeService.instance.onMessage.listen((_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _matchSub?.cancel();
+    _messageSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {

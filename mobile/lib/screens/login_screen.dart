@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/realtime_service.dart';
 import 'jackpot_screen.dart';
 import 'signup/signup_basic_info_screen.dart';
 
@@ -24,6 +25,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       await _api.login(email: _emailController.text, password: _passwordController.text);
+      await RealtimeService.instance.connect();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const JackpotScreen()));
     } catch (e) {
