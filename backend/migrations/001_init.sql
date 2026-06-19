@@ -1,0 +1,40 @@
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  birthdate DATE NOT NULL,
+  gender TEXT NOT NULL,
+  bio TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE preferences (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  interested_in TEXT NOT NULL,
+  min_age INTEGER NOT NULL DEFAULT 18,
+  max_age INTEGER NOT NULL DEFAULT 99,
+  max_distance_km INTEGER NOT NULL DEFAULT 50
+);
+
+CREATE TABLE jackpot_tickets (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  spent BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE TABLE jackpot_draws (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  matched_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE matches (
+  id SERIAL PRIMARY KEY,
+  user_a_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_b_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_a_id, user_b_id)
+);
