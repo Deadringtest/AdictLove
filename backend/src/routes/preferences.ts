@@ -10,11 +10,11 @@ router.get('/', requireAuth, async (req: AuthedRequest, res) => {
 });
 
 router.put('/', requireAuth, async (req: AuthedRequest, res) => {
-  const { interestedIn, minAge, maxAge, maxDistanceKm } = req.body;
+  const { interestedIn, minAge, maxAge, maxDistanceKm, lookingFor } = req.body;
   const result = await pool.query(
-    `UPDATE preferences SET interested_in = $1, min_age = $2, max_age = $3, max_distance_km = $4
-     WHERE user_id = $5 RETURNING *`,
-    [interestedIn, minAge, maxAge, maxDistanceKm, req.userId]
+    `UPDATE preferences SET interested_in = $1, min_age = $2, max_age = $3, max_distance_km = $4, looking_for = $5
+     WHERE user_id = $6 RETURNING *`,
+    [interestedIn, minAge, maxAge, maxDistanceKm, lookingFor, req.userId]
   );
   res.json(result.rows[0]);
 });

@@ -129,6 +129,45 @@ class ApiService {
     _decodeOrThrow(res, 200);
   }
 
+  Future<Map<String, dynamic>> getProfile() async {
+    final res = await http.get(Uri.parse('$baseUrl/profile'), headers: await _authHeaders());
+    return _decodeOrThrow(res, 200);
+  }
+
+  Future<void> deletePhoto(int photoId) async {
+    final res = await http.delete(Uri.parse('$baseUrl/profile/photos/$photoId'), headers: await _authHeaders());
+    if (res.statusCode != 204) {
+      throw Exception('Failed to delete photo');
+    }
+  }
+
+  Future<Map<String, dynamic>?> getPreferences() async {
+    final res = await http.get(Uri.parse('$baseUrl/preferences'), headers: await _authHeaders());
+    final body = _decodeOrThrow(res, 200);
+    return body as Map<String, dynamic>?;
+  }
+
+  Future<void> updatePreferences({
+    required String interestedIn,
+    required int minAge,
+    required int maxAge,
+    required int maxDistanceKm,
+    required String lookingFor,
+  }) async {
+    final res = await http.put(
+      Uri.parse('$baseUrl/preferences'),
+      headers: await _authHeaders(),
+      body: jsonEncode({
+        'interestedIn': interestedIn,
+        'minAge': minAge,
+        'maxAge': maxAge,
+        'maxDistanceKm': maxDistanceKm,
+        'lookingFor': lookingFor,
+      }),
+    );
+    _decodeOrThrow(res, 200);
+  }
+
   Future<void> uploadPhoto(File file) async {
     final headers = await _authHeaders();
     headers.remove('Content-Type');

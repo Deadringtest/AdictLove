@@ -35,14 +35,23 @@ router.post('/spin', requireAuth, async (req: AuthedRequest, res) => {
     const prefs = await client.query('SELECT * FROM preferences WHERE user_id = $1', [req.userId]);
     const pref = prefs.rows[0];
 
+    // Weighted-random pick: shared categories raise the odds (more "luck") without
+    // making the draw deterministic, via the standard -ln(random())/weight trick.
     const candidates = await client.query(
-      `SELECT u.id FROM users u
-       LEFT JOIN jackpot_draws d ON d.user_id = $1 AND d.matched_user_id = u.id
-       WHERE u.id != $1
-         AND ($2 = 'everyone' OR u.gender = $2)
-         AND date_part('year', age(u.birthdate)) BETWEEN $3 AND $4
-         AND d.id IS NULL
-       ORDER BY random()
+      `WITH eligible AS (
+         SELECT u.id,
+                COALESCE((SELECT COUNT(*) FROM user_categories mine
+                          JOIN user_categories theirs ON theirs.category_id = mine.category_id
+                          WHERE mine.user_id = $1 AND theirs.user_id = u.id), 0) AS shared_categories
+         FROM users u
+         LEFT JOIN jackpot_draws d ON d.user_id = $1 AND d.matched_user_id = u.id
+         WHERE u.id != $1
+           AND ($2 = 'everyone' OR u.gender = $2)
+           AND date_part('year', age(u.birthdate)) BETWEEN $3 AND $4
+           AND d.id IS NULL
+       )
+       SELECT id FROM eligible
+       ORDER BY -ln(random()) / (1 + 3 * shared_categories)
        LIMIT 1`,
       [req.userId, pref?.interested_in ?? 'everyone', pref?.min_age ?? 18, pref?.max_age ?? 99]
     );

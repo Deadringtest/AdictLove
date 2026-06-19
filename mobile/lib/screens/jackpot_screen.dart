@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../widgets/photo_gallery.dart';
 import 'matches_screen.dart';
+import 'settings_screen.dart';
 
 class JackpotScreen extends StatefulWidget {
   const JackpotScreen({super.key});
@@ -127,6 +128,11 @@ class _JackpotScreenState extends State<JackpotScreen> {
             icon: const Icon(Icons.chat_bubble_outline),
             onPressed: () =>
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MatchesScreen())),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () =>
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
           ),
         ],
       ),
