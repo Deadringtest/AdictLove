@@ -143,13 +143,18 @@ class ApiService {
     return jsonDecode(res.body)['tickets'];
   }
 
+  String? photoUrl(String? path) => path == null ? null : '$baseUrl$path';
+
   Future<Map<String, dynamic>> spinJackpot() async {
     final res = await http.post(Uri.parse('$baseUrl/jackpot/spin'), headers: await _authHeaders());
     final body = jsonDecode(res.body);
     if (res.statusCode != 200) {
       throw Exception(body['error'] ?? 'Spin failed');
     }
-    return body['result'];
+    return {
+      'result': body['result'],
+      'decoys': (body['decoys'] as List?)?.cast<Map<String, dynamic>>() ?? [],
+    };
   }
 
   Future<bool> likeSpinResult(int matchedUserId) async {

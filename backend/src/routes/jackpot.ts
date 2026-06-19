@@ -60,12 +60,25 @@ router.post('/spin', requireAuth, async (req: AuthedRequest, res) => {
     );
 
     const profile = await client.query(
-      'SELECT id, display_name, bio FROM users WHERE id = $1',
+      `SELECT u.id, u.display_name, u.bio,
+              (SELECT file_path FROM photos WHERE user_id = u.id ORDER BY position LIMIT 1) AS photo
+       FROM users u WHERE u.id = $1`,
       [matchedUserId]
     );
 
+    const decoys = await client.query(
+      `SELECT u.id, u.display_name,
+              (SELECT file_path FROM photos WHERE user_id = u.id ORDER BY position LIMIT 1) AS photo
+       FROM users u
+       WHERE u.id != $1 AND u.id != $2
+         AND EXISTS (SELECT 1 FROM photos WHERE user_id = u.id)
+       ORDER BY random()
+       LIMIT 6`,
+      [req.userId, matchedUserId]
+    );
+
     await client.query('COMMIT');
-    res.json({ result: profile.rows[0] });
+    res.json({ result: profile.rows[0], decoys: decoys.rows });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
