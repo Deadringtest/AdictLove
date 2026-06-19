@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-
-import 'login_page.dart';
+import 'screens/login_screen.dart';
 
 void main() {
   runApp(const AdictLoveApp());
@@ -13,11 +12,8 @@ class AdictLoveApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'AdictLove',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.pink),
-        useMaterial3: true,
-      ),
-      home: const LoginPage(),
+      theme: ThemeData(colorSchemeSeed: Colors.pink, useMaterial3: true),
+      home: const LoginScreen(),
     );
   }
 }
