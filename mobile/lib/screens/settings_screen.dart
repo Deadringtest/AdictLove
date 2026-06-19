@@ -65,24 +65,47 @@ class _ProfileTabState extends State<_ProfileTab> {
   bool _saving = false;
   String? _message;
 
+  List<Map<String, dynamic>> _allPrompts = [];
+  final List<TextEditingController> _promptAnswerControllers =
+      List.generate(3, (_) => TextEditingController());
+  final List<int?> _selectedPromptIds = [null, null, null];
+
   @override
   void initState() {
     super.initState();
     _load();
   }
 
+  @override
+  void dispose() {
+    for (final controller in _promptAnswerControllers) {
+      controller.dispose();
+    }
+    _bioController.dispose();
+    _pronounsController.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final profile = await _api.getProfile();
     final categories = await _api.getCategories();
+    final allPrompts = await _api.getPrompts();
     setState(() {
       _bioController.text = profile['bio'] ?? '';
       _pronounsController.text = profile['pronouns'] ?? '';
       _photos = (profile['photos'] as List).cast<Map<String, dynamic>>();
       _allCategories = categories;
+      _allPrompts = allPrompts;
       _selectedCategoryIds = (profile['categories'] as List)
           .map((c) => c['id'] as int)
           .toSet();
       _verificationStatus = profile['verification_status'] ?? 'none';
+
+      final myPrompts = (profile['prompts'] as List).cast<Map<String, dynamic>>();
+      for (var i = 0; i < myPrompts.length && i < 3; i++) {
+        _selectedPromptIds[i] = myPrompts[i]['prompt_id'] as int;
+        _promptAnswerControllers[i].text = myPrompts[i]['answer'] as String;
+      }
       _loading = false;
     });
   }
@@ -95,6 +118,20 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   Future<void> _submitVerification() async {
+    final pose = await _api.getVerificationPose();
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Verification pose'),
+        content: Text('Take a selfie while you: $pose'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Take photo')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     final picked = await ImagePicker().pickImage(source: ImageSource.camera);
     if (picked == null) return;
     await _api.uploadVerificationPhoto(File(picked.path));
@@ -114,6 +151,13 @@ class _ProfileTabState extends State<_ProfileTab> {
     try {
       await _api.updateProfile(bio: _bioController.text.trim(), pronouns: _pronounsController.text.trim());
       await _api.setCategories(_selectedCategoryIds.toList());
+      final answers = <Map<String, dynamic>>[];
+      for (var i = 0; i < 3; i++) {
+        if (_selectedPromptIds[i] != null && _promptAnswerControllers[i].text.trim().isNotEmpty) {
+          answers.add({'promptId': _selectedPromptIds[i], 'answer': _promptAnswerControllers[i].text.trim()});
+        }
+      }
+      await _api.setPromptAnswers(answers);
       setState(() => _message = 'Saved!');
     } catch (e) {
       setState(() => _message = e.toString().replaceFirst('Exception: ', ''));
@@ -185,6 +229,35 @@ class _ProfileTabState extends State<_ProfileTab> {
           controller: _pronounsController,
           decoration: const InputDecoration(labelText: 'Pronouns', border: OutlineInputBorder()),
         ),
+        const SizedBox(height: 24),
+        Text('Icebreaker prompts', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        for (var i = 0; i < 3; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: _selectedPromptIds[i],
+                  decoration: InputDecoration(labelText: 'Prompt ${i + 1}', border: const OutlineInputBorder()),
+                  items: [
+                    for (final prompt in _allPrompts)
+                      DropdownMenuItem(value: prompt['id'] as int, child: Text(prompt['text'])),
+                  ],
+                  onChanged: (value) => setState(() => _selectedPromptIds[i] = value),
+                ),
+                if (_selectedPromptIds[i] != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: TextField(
+                      controller: _promptAnswerControllers[i],
+                      decoration: const InputDecoration(labelText: 'Your answer', border: OutlineInputBorder()),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         const SizedBox(height: 24),
         Text('Interests', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),

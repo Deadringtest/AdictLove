@@ -21,6 +21,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
   List<String> _resultPhotos = [];
   String? _error;
   String? _dailyMessage;
+  int _sharedCategories = 0;
 
   List<Map<String, dynamic>> _reel = [];
   int _reelIndex = 0;
@@ -46,7 +47,10 @@ class _JackpotScreenState extends State<JackpotScreen> {
   Future<void> _claimDaily() async {
     try {
       final result = await _api.claimDailyTickets();
-      setState(() => _dailyMessage = 'Claimed ${result['granted']} tickets! Streak: ${result['streak']} days');
+      final milestone = result['milestone'];
+      setState(() => _dailyMessage = milestone != null
+          ? '$milestone-day streak! Claimed ${result['granted']} bonus tickets!'
+          : 'Claimed ${result['granted']} tickets! Streak: ${result['streak']} days');
       await _refreshTickets();
     } catch (e) {
       setState(() => _dailyMessage = e.toString().replaceFirst('Exception: ', ''));
@@ -89,6 +93,7 @@ class _JackpotScreenState extends State<JackpotScreen> {
       _reel = [...decoys, result];
       if (_reel.length < 2) _reel = [result, result, result];
       _reelIndex = 0;
+      _sharedCategories = (response['sharedCategories'] as num?)?.toInt() ?? 0;
 
       await _animateReel();
 
@@ -200,7 +205,31 @@ class _JackpotScreenState extends State<JackpotScreen> {
                   ],
                 ],
               ),
+              if (_sharedCategories > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'You have $_sharedCategories thing${_sharedCategories > 1 ? 's' : ''} in common',
+                    style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.pink),
+                  ),
+                ),
               if (_result!['bio'] != null && (_result!['bio'] as String).isNotEmpty) Text(_result!['bio']),
+              if (_result!['prompt'] != null) ...[
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    children: [
+                      Text(
+                        _result!['prompt']['prompt'],
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
+                      ),
+                      Text(_result!['prompt']['answer'], textAlign: TextAlign.center),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,

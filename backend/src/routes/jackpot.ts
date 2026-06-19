@@ -9,6 +9,8 @@ const router = Router();
 const DAILY_TICKET_CAP = 5;
 const BASE_DAILY_TICKETS = 3;
 const MAX_AD_TICKETS_PER_DAY = 3;
+const STREAK_MILESTONES = [7, 30, 100];
+const MILESTONE_BONUS_TICKETS = 2;
 
 router.get('/tickets', requireAuth, async (req: AuthedRequest, res) => {
   const result = await pool.query(
@@ -32,10 +34,10 @@ router.post('/tickets/claim-daily', requireAuth, async (req: AuthedRequest, res)
     await client.query('BEGIN');
 
     const user = await client.query(
-      'SELECT ticket_streak, last_ticket_claim FROM users WHERE id = $1 FOR UPDATE',
+      'SELECT ticket_streak, last_ticket_claim, last_streak_milestone FROM users WHERE id = $1 FOR UPDATE',
       [req.userId]
     );
-    const { ticket_streak: streak, last_ticket_claim: lastClaim } = user.rows[0];
+    const { ticket_streak: streak, last_ticket_claim: lastClaim, last_streak_milestone: lastMilestone } = user.rows[0];
 
     const today = await client.query<{ today: string; isSameDay: boolean; isYesterday: boolean }>(
       `SELECT CURRENT_DATE::text AS today,
@@ -61,13 +63,23 @@ router.post('/tickets/claim-daily', requireAuth, async (req: AuthedRequest, res)
     for (let i = 0; i < toGrant; i++) {
       await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [req.userId]);
     }
+
+    const milestone = STREAK_MILESTONES.find((m) => newStreak >= m && lastMilestone < m);
+    let milestoneBonus = 0;
+    if (milestone) {
+      milestoneBonus = MILESTONE_BONUS_TICKETS;
+      for (let i = 0; i < milestoneBonus; i++) {
+        await client.query('INSERT INTO jackpot_tickets (user_id) VALUES ($1)', [req.userId]);
+      }
+    }
+
     await client.query(
-      'UPDATE users SET ticket_streak = $1, last_ticket_claim = CURRENT_DATE WHERE id = $2',
-      [newStreak, req.userId]
+      'UPDATE users SET ticket_streak = $1, last_ticket_claim = CURRENT_DATE, last_streak_milestone = $2 WHERE id = $3',
+      [newStreak, milestone ?? lastMilestone, req.userId]
     );
 
     await client.query('COMMIT');
-    res.json({ granted: toGrant, streak: newStreak });
+    res.json({ granted: toGrant + milestoneBonus, streak: newStreak, milestone: milestone ?? null });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -146,6 +158,7 @@ async function pickCandidate(
   }
   if (pool_.length === 0) return null;
 
+
   let best = pool_[0];
   let bestScore = Infinity;
   for (const row of pool_) {
@@ -155,7 +168,7 @@ async function pickCandidate(
       best = row;
     }
   }
-  return best.id as number;
+  return { id: best.id as number, sharedCategories: Number(best.shared_categories) };
 }
 
 async function spendTickets(client: PoolClient, userId: number, count: number) {
@@ -183,12 +196,13 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
     }
 
     const prefs = await client.query('SELECT * FROM preferences WHERE user_id = $1', [req.userId]);
-    const matchedUserId = await pickCandidate(client, req.userId!, prefs.rows[0], boosted);
+    const picked = await pickCandidate(client, req.userId!, prefs.rows[0], boosted);
 
-    if (matchedUserId === null) {
+    if (picked === null) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'No new matches available right now' });
     }
+    const { id: matchedUserId, sharedCategories } = picked;
 
     await client.query(
       'INSERT INTO jackpot_draws (user_id, matched_user_id) VALUES ($1, $2)',
@@ -199,6 +213,13 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
       `SELECT u.id, u.display_name, u.bio, u.verification_status,
               (SELECT file_path FROM photos WHERE user_id = u.id ORDER BY position LIMIT 1) AS photo
        FROM users u WHERE u.id = $1`,
+      [matchedUserId]
+    );
+
+    const prompt = await client.query(
+      `SELECT p.text AS prompt, up.answer FROM user_prompts up
+       JOIN prompts p ON p.id = up.prompt_id
+       WHERE up.user_id = $1 ORDER BY up.position LIMIT 1`,
       [matchedUserId]
     );
 
@@ -216,7 +237,11 @@ async function performSpin(req: AuthedRequest, res: import('express').Response, 
     );
 
     await client.query('COMMIT');
-    res.json({ result: profile.rows[0], decoys: decoys.rows });
+    res.json({
+      result: { ...profile.rows[0], prompt: prompt.rows[0] ?? null },
+      decoys: decoys.rows,
+      sharedCategories,
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -279,6 +304,9 @@ router.post('/spin/:resultUserId/like', requireAuth, async (req: AuthedRequest, 
     return res.json({ mutualMatch: true, mega });
   }
 
+  // Not mutual yet -- nudge the liked person to come spin, without revealing
+  // who liked them (keeps the luck-based reveal intact on their side too).
+  sendToUser(otherUserId, 'admirer_waiting', {});
   res.json({ mutualMatch: false, mega });
 });
 

@@ -6,7 +6,7 @@ const router = Router();
 
 router.get('/verifications/pending', requireAuth, requireAdmin, async (_req, res) => {
   const result = await pool.query(
-    `SELECT id, display_name, verification_photo FROM users WHERE verification_status = 'pending'`
+    `SELECT id, display_name, verification_photo, verification_pose FROM users WHERE verification_status = 'pending'`
   );
   res.json(result.rows);
 });

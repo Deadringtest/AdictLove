@@ -43,7 +43,46 @@ router.get('/', requireAuth, async (req: AuthedRequest, res) => {
      WHERE uc.user_id = $1`,
     [req.userId]
   );
-  res.json({ ...user.rows[0], photos: photos.rows, categories: categories.rows });
+  const prompts = await pool.query(
+    `SELECT up.id, up.prompt_id, p.text AS prompt, up.answer
+     FROM user_prompts up JOIN prompts p ON p.id = up.prompt_id
+     WHERE up.user_id = $1 ORDER BY up.position`,
+    [req.userId]
+  );
+  res.json({ ...user.rows[0], photos: photos.rows, categories: categories.rows, prompts: prompts.rows });
+});
+
+router.get('/prompts', requireAuth, async (_req, res) => {
+  const result = await pool.query('SELECT id, text FROM prompts ORDER BY id');
+  res.json(result.rows);
+});
+
+router.put('/prompts', requireAuth, async (req: AuthedRequest, res) => {
+  const { answers } = req.body as { answers: { promptId: number; answer: string }[] };
+  if (!Array.isArray(answers) || answers.length > 3) {
+    return res.status(400).json({ error: 'Provide up to 3 prompt answers' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM user_prompts WHERE user_id = $1', [req.userId]);
+    for (let i = 0; i < answers.length; i++) {
+      const { promptId, answer } = answers[i];
+      const trimmed = (answer ?? '').trim();
+      if (!trimmed) continue;
+      await client.query(
+        'INSERT INTO user_prompts (user_id, prompt_id, answer, position) VALUES ($1, $2, $3, $4)',
+        [req.userId, promptId, trimmed, i]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ updated: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
 router.put('/', requireAuth, async (req: AuthedRequest, res) => {
@@ -71,6 +110,22 @@ router.post('/photos', requireAuth, upload.single('photo'), async (req: AuthedRe
 router.delete('/photos/:id', requireAuth, async (req: AuthedRequest, res) => {
   await pool.query('DELETE FROM photos WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
   res.status(204).end();
+});
+
+const VERIFICATION_POSES = [
+  'Hold up 2 fingers next to your face',
+  'Give a thumbs up next to your face',
+  'Touch your nose with one hand',
+  'Hold up 3 fingers next to your face',
+];
+
+// Liveness check: ask for a random pose before the selfie is taken, so a
+// recycled/stolen photo can't be reused for verification. The admin review
+// step (in admin.ts) checks the submitted photo against this stored pose.
+router.get('/verification/pose', requireAuth, async (req: AuthedRequest, res) => {
+  const pose = VERIFICATION_POSES[Math.floor(Math.random() * VERIFICATION_POSES.length)];
+  await pool.query('UPDATE users SET verification_pose = $1 WHERE id = $2', [pose, req.userId]);
+  res.json({ pose });
 });
 
 router.post('/verification', requireAuth, upload.single('photo'), async (req: AuthedRequest, res) => {

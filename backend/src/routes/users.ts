@@ -3,6 +3,7 @@ import { pool } from '../db';
 import { AuthedRequest, requireAuth } from '../auth';
 
 const router = Router();
+const MAX_REPORTS_PER_DAY = 5;
 
 router.get('/:id/photos', requireAuth, async (req, res) => {
   const result = await pool.query(
@@ -51,6 +52,13 @@ router.post('/:id/report', requireAuth, async (req: AuthedRequest, res) => {
   }
   if (reportedId === req.userId) {
     return res.status(400).json({ error: 'Cannot report yourself' });
+  }
+  const todayCount = await pool.query(
+    `SELECT COUNT(*) FROM reports WHERE reporter_id = $1 AND created_at >= CURRENT_DATE`,
+    [req.userId]
+  );
+  if (Number(todayCount.rows[0].count) >= MAX_REPORTS_PER_DAY) {
+    return res.status(429).json({ error: 'Daily report limit reached' });
   }
   await pool.query('INSERT INTO reports (reporter_id, reported_id, reason) VALUES ($1, $2, $3)', [
     req.userId,
